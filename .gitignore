@@ -1,0 +1,9 @@
+.pio/
+.vscode/
+*.pyc
+__pycache__/
+.DS_Store
+.claude-flow/
+.swarm/
+**/.claude-flow/
+**/.swarm/

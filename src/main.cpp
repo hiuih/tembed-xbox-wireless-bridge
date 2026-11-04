@@ -1,0 +1,118 @@
+#include <Arduino.h>
+#include "config.h"
+#include "radio.h"
+#include "gip.h"
+#include "pairing.h"
+#include "hid.h"
+#include "bootguard.h"
+#include "ui.h"
+#include "leds.h"
+#include "knob.h"
+#include "power.h"
+#include "esp_task_wdt.h"
+
+static uint32_t restartAt = 0;
+
+static void onPad(int slot, PadEvent ev) {
+  const Pad &p = gip_pad(slot);
+  const char *n[] = {"CONNECTED", "READY", "DISCONNECTED", "GUIDE_DOWN", "GUIDE_UP", "INPUT"};
+  USBSerial.printf("[pad %d] %s %02x:%02x:%02x:%02x:%02x:%02x vid=%04x pid=%04x\n", slot, n[ev],
+                p.mac[0], p.mac[1], p.mac[2], p.mac[3], p.mac[4], p.mac[5], p.vid, p.pid);
+  leds_pad_event(slot, ev);
+  // Like a real Xbox: the Xbox button (or a controller powering on) wakes the computer.
+  if (ev == PADEV_GUIDE_DOWN || ev == PADEV_READY) {
+    if (hid_wake_host()) { leds_flash(140, 140, 140, 600); USBSerial.println("USB remote wakeup sent"); }
+  }
+  // More controllers than USB gamepads exposed: expose more (needs a USB re-enumeration = restart).
+  if (ev == PADEV_READY && slot >= hid_slots() && !restartAt) {
+    hid_request_slots(slot + 1);
+    restartAt = millis() + 2500;
+    leds_flash(170, 0, 255, 2500);
+    USBSerial.println("new controller needs more USB gamepads: restarting to expose them");
+  }
+}
+
+void gipLogRx(int i, uint8_t cmd, uint8_t opt, uint8_t seq, uint32_t plen, uint32_t coff) {
+  USBSerial.printf("  [pad%d RX] cmd=%02x opt=%02x seq=%02x plen=%lu coff=%lu\n", i, cmd, opt, seq, (unsigned long)plen, (unsigned long)coff);
+}
+void gipLogTx(int i, uint8_t cmd, uint8_t opt, uint8_t seq, int plen, bool ok) {
+  USBSerial.printf("  [pad%d TX] cmd=%02x opt=%02x seq=%02x plen=%d %s\n", i, cmd, opt, seq, plen, ok ? "ok" : "FAILED");
+}
+
+static void status() {
+  static uint32_t lastIn[MAX_PADS];
+  const RadioStats &s = radio_stats();
+  { char pb[96]; power_report(pb, sizeof(pb)); USBSerial.printf("power: %s\n", pb); }
+  USBSerial.printf("last reset: %s (crash count %lu, last loop step before it: %u)\n", boot_reason(), (unsigned long)boot_crash_count(), boot_prev_mark());
+  USBSerial.printf("usb mounted=%d suspended=%d slots=%d reports=%lu rumbleMsgs=%lu\n", hid_mounted(), hid_suspended(), hid_slots(), (unsigned long)hid_reports_sent(), (unsigned long)hid_rumble_msgs());
+  USBSerial.printf("== ch%u %s pairing=%d known=%d | rx=%lu toMe=%lu dup=%lu qdrop=%lu txerr=%lu\n", radio_channel(),
+                radio_scanning() ? "scan" : "hold", pairing_active(), pairing_count(), (unsigned long)s.rxFrames,
+                (unsigned long)s.toMe, (unsigned long)s.dupDropped, (unsigned long)s.queueDrops, (unsigned long)s.txErr);
+  for (int i = 0; i < MAX_PADS; i++) {
+    const Pad &p = gip_pad(i);
+    if (p.stage == PAD_FREE) continue;
+    USBSerial.printf("  pad%d stage=%d rssi=%d in=%lu (+%lu/10s) assoc=%lu id=%d batt=%d/%d(raw %02x) up=%lus inputs-missed=%lu lostFrames=%lu/%lu\n", i, p.stage, p.rssi,
+                  (unsigned long)p.inputCount, (unsigned long)(p.inputCount - lastIn[i]), (unsigned long)p.assocCount, p.identified,
+                  p.battType, p.battLevel, p.battRaw, (unsigned long)((millis() - p.connectedAt) / 1000), (unsigned long)p.inputGaps, (unsigned long)radio_lost_frames(i), (unsigned long)radio_rx_frames(i));
+    lastIn[i] = p.inputCount;
+  }
+}
+
+void setup() {
+  bootguard_begin();
+  esp_task_wdt_init(5, true);   // panic + reset if the main loop stalls for 5 s
+  esp_task_wdt_add(NULL);
+  pairing_begin();
+  hid_begin();                                   // USB first, so a power hiccup can't starve enumeration
+  uint32_t t0 = millis();
+  while (!hid_mounted() && millis() - t0 < 3000) delay(10);   // let the computer enumerate us
+  delay(300);
+  power_begin();
+  radio_begin();
+  delay(200);
+  leds_begin();
+  delay(200);
+  ui_begin();
+  gip_begin(onPad);
+  USBSerial.printf("XBOX BRIDGE ready, known controllers: %d\n", pairing_count());
+  USBSerial.println("keys: s=status B=bootloader R=restart p=pairing f=forget-all v=rumble l=led d=debug");
+}
+
+static uint32_t rumbleOff = 0;
+
+void loop() {
+  esp_task_wdt_reset();
+  boot_mark(1);
+  RadioEvent ev;
+  for (int n = 0; n < 24 && radio_poll(ev); n++) gip_handle(ev);
+  boot_mark(2); gip_tick();
+  boot_mark(3); pairing_tick();
+  radio_set_pairing(pairing_beacon_flag());
+  boot_mark(4); radio_tick();
+  boot_mark(5); hid_task();
+  boot_mark(6);
+  if (rumbleOff && (int32_t)(millis() - rumbleOff) >= 0) { rumbleOff = 0; for (int i = 0; i < MAX_PADS; i++) gip_rumble(i, 0, 0, 0, 0); USBSerial.println("rumble off"); }
+  bootguard_tick();
+  if (restartAt && (int32_t)(millis() - restartAt) >= 0) ESP.restart();
+  boot_mark(7); knob_tick();
+  boot_mark(8); leds_tick();
+  boot_mark(9);
+
+  while (USBSerial.available()) {
+    char c = USBSerial.read();
+    if (c == 'p') { if (pairing_active()) pairing_stop(); else pairing_start(); USBSerial.printf("pairing=%d\n", pairing_active()); }
+    else if (c == 'f') { pairing_clear(); USBSerial.println("forgot all controllers"); }
+    else if (c == 'v') { for (int i = 0; i < MAX_PADS; i++) gip_rumble(i, 70, 70, 0, 0); rumbleOff = millis() + 700; USBSerial.println("rumble on"); }
+    else if (c == 'l') { static uint8_t m = 0; const uint8_t modes[] = {0, 1, 2, 3, 4, 8, 9, 1}; m = (m + 1) % sizeof(modes); for (int i = 0; i < MAX_PADS; i++) gip_led(i, modes[m], 20); USBSerial.printf("led mode %u\n", modes[m]); }
+    else if (c == 's') status();
+    else if (c == '1') { gip_test_ack(0, 0); USBSerial.println("test: rumble+ack"); }
+    else if (c == '2') { gip_test_ack(0, 1); USBSerial.println("test: rumble(internal)+ack"); }
+    else if (c == '3') { gip_test_ack(0, 2); USBSerial.println("test: led+ack"); }
+    else if (c == 'd') { static bool d = false; d = !d; gip_set_debug(d); USBSerial.printf("gip debug %d\n", d); }
+    else if (c == 'B') { USBSerial.println("rebooting into bootloader..."); USBSerial.flush(); delay(100); boot_to_download(); }
+    else if (c == 'R') { USBSerial.println("restarting..."); USBSerial.flush(); delay(100); ESP.restart(); }
+  }
+  static uint32_t lastStat = 0;
+  if (millis() - lastStat > 10000) { lastStat = millis(); status(); }
+  delay(1);
+}
