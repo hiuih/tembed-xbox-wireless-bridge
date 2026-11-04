@@ -1,11 +1,16 @@
 #pragma once
 #include "config.h"
 #include "gip.h"
+#ifdef XINPUT_MODE
+// XInput must be the only USB function, so the log/console is the board's UART (the other USB-C port).
+#define USBSerial Serial
+#else
 #include "USB.h"
 #include "USBCDC.h"
 
 // Serial log over the TinyUSB CDC port (started together with the gamepads in hid_begin()).
 extern USBCDC USBSerial;
+#endif
 
 // USB HID gamepads: one top-level Gamepad collection (report id = slot+1) per slot.
 void hid_begin();                       // call in setup(), before any USB traffic

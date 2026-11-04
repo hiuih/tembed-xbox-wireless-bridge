@@ -32,6 +32,17 @@ uint32_t radio_last_rx(int slot);
 void radio_set_pending_tx(int slot, bool on);   // ask for an EV_NULL the next time this controller transmits
 uint32_t radio_lost_frames(int slot);   // 802.11 sequence gaps seen from this controller (frames our radio missed)
 uint32_t radio_rx_frames(int slot);
+void radio_seq_report(int slot, char *buf, size_t n);   // sequence-gap stats per 802.11 frame type
+void radio_set_tx_power(int quarter_dbm);               // 8..84, units of 0.25 dBm
+int radio_tx_power();
+void radio_census(int slot, char *buf, size_t n);       // what the controller transmits: type/subtype x destination
+void radio_force_channel(int ch);                       // 0 = auto (scan), else pin to 1..11
+int radio_forced_channel();
+void radio_tweak(bool on);                              // experimental AP tweaks (rare driver beacons, 11g only)
+bool radio_tweaked();
+void radio_trace_vendor(char *buf, size_t n);          // last vendor (type0/sub7) frames from the controller: timing, seq, retry flag
+void radio_set_filter(int mode);                        // 0 = everything, 1 = management+data only
+int radio_filter();
 
 void radio_set_pairing(bool on);         // beacon pair flag
 bool radio_pairing();

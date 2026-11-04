@@ -36,6 +36,8 @@ struct Pad {
   uint8_t battType, battLevel;   // GIP battery type / level (0..3)
   bool battKnown;
   uint8_t battRaw;               // raw status byte from the controller (bit7 connected, bits3:2 type, bits1:0 level)
+  uint32_t inHist[6];            // gap between input reports: <10, <20, <40, <80, <160, >=160 ms
+  uint32_t gipSeen;              // GIP packets received (non-chunk)
   uint32_t inputGaps;            // input packets we never saw (GIP sequence gaps)
   uint32_t connectedAt, lastInputAt;
   uint32_t inputCount, assocCount;

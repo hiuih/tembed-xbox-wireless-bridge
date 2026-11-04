@@ -168,6 +168,34 @@ Build and flash (no buttons for a blank board or one already running this firmwa
 If the board is running some other firmware, hold its BOOT button while plugging it in once, to start it in the bootloader.
 Only the T-Embed build has been tested on real hardware; this one compiles but has not been run yet.
 
+## Windows XInput build (`s3_xinput`): shows up as a real Xbox controller
+
+Games like FIFA treat a generic USB gamepad as a PlayStation-style DirectInput device. This build instead
+presents the bridge as an **Xbox 360 (XInput) controller** (USB `045E:028E`), so Windows and games use the Xbox
+mapping and glyphs. Each paired controller is one XInput interface (player slot). **Status: compiles and the
+radio side is verified; the Windows side is being tested.** Multiple controllers on one USB device is the part
+Windows may not accept; if only one shows up, that's the limit.
+
+- XInput must be the **only USB function**: no gamepad-HID, no USB serial. The log/console is the board's **UART
+  USB-C port** (115200 baud); the **native/OTG port** goes to the PC.
+- Flash through the UART port (no 1200-baud touch here):
+  `pio run -e s3_xinput -t upload --upload-port /dev/cu.usbmodemXXXX`
+- Rumble requests from games are received and forwarded, but rumble still does not work on the radio side.
+- Mac/Linux: use the HID builds instead.
+
+Extra serial commands in this build: `x` census of everything the controller transmits (frame types, ack policy,
+PHY rate), `z` timing trace of the controller's vendor frames, `w` cycle TX power, `m` toggle RX filter,
+`e` toggle radio tweaks, `k` pin the channel (1/6/11/auto).
+
+### Wireless link measurements (T-Embed + bare S3, Series controller)
+
+- ~100-118 input reports/s while a stick is moved; 99% of intervals under 40 ms.
+- The controller sends HT20 MCS3 frames with normal ack policy. It also sends a vendor frame (`70 0e`) 3-5 times
+  a second, retried 4-6 times in a burst, because the ESP32 radio never acknowledges that (reserved) frame type.
+  It costs about 1 ms of airtime per burst.
+- About 17-25% of GIP sequence numbers are never seen. TX power, receive filter, channel (1/6/11), receive buffers
+  and driver beacon settings did not change that.
+
 ## Waking the computer
 
 When the computer is suspended, pressing the Xbox button (or a controller connecting) sends a **USB remote

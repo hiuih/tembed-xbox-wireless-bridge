@@ -51,6 +51,7 @@ static void status() {
   { char pb[96]; power_report(pb, sizeof(pb)); USBSerial.printf("power: %s\n", pb); }
 #endif
   USBSerial.printf("last reset: %s (crash count %lu, last loop step before it: %u)\n", boot_reason(), (unsigned long)boot_crash_count(), boot_prev_mark());
+  USBSerial.printf("radio: tx power %d (%.1f dBm), filter=%d\n", radio_tx_power(), radio_tx_power() / 4.0f, radio_filter());
   USBSerial.printf("usb mounted=%d suspended=%d slots=%d reports=%lu rumbleMsgs=%lu\n", hid_mounted(), hid_suspended(), hid_slots(), (unsigned long)hid_reports_sent(), (unsigned long)hid_rumble_msgs());
   USBSerial.printf("== ch%u %s pairing=%d known=%d | rx=%lu toMe=%lu dup=%lu qdrop=%lu txerr=%lu\n", radio_channel(),
                 radio_scanning() ? "scan" : "hold", pairing_active(), pairing_count(), (unsigned long)s.rxFrames,
@@ -58,9 +59,12 @@ static void status() {
   for (int i = 0; i < MAX_PADS; i++) {
     const Pad &p = gip_pad(i);
     if (p.stage == PAD_FREE) continue;
-    USBSerial.printf("  pad%d stage=%d rssi=%d in=%lu (+%lu/10s) assoc=%lu id=%d batt=%d/%d(raw %02x) up=%lus inputs-missed=%lu lostFrames=%lu/%lu\n", i, p.stage, p.rssi,
+    USBSerial.printf("  pad%d stage=%d rssi=%d in=%lu (+%lu/10s) assoc=%lu id=%d batt=%d/%d(raw %02x) up=%lus gip(seen=%lu missed=%lu) lostFrames=%lu/%lu\n", i, p.stage, p.rssi,
                   (unsigned long)p.inputCount, (unsigned long)(p.inputCount - lastIn[i]), (unsigned long)p.assocCount, p.identified,
-                  p.battType, p.battLevel, p.battRaw, (unsigned long)((millis() - p.connectedAt) / 1000), (unsigned long)p.inputGaps, (unsigned long)radio_lost_frames(i), (unsigned long)radio_rx_frames(i));
+                  p.battType, p.battLevel, p.battRaw, (unsigned long)((millis() - p.connectedAt) / 1000), (unsigned long)p.gipSeen, (unsigned long)p.inputGaps, (unsigned long)radio_lost_frames(i), (unsigned long)radio_rx_frames(i));
+    { char sb[120]; radio_seq_report(i, sb, sizeof(sb));
+      USBSerial.printf("    %s\n    input gaps ms: <10:%lu <20:%lu <40:%lu <80:%lu <160:%lu >=160:%lu\n", sb,
+                    (unsigned long)p.inHist[0], (unsigned long)p.inHist[1], (unsigned long)p.inHist[2], (unsigned long)p.inHist[3], (unsigned long)p.inHist[4], (unsigned long)p.inHist[5]); }
     lastIn[i] = p.inputCount;
   }
 }
@@ -125,6 +129,12 @@ void loop() {
     else if (c == 'v') { for (int i = 0; i < MAX_PADS; i++) gip_rumble(i, 70, 70, 0, 0); rumbleOff = millis() + 700; USBSerial.println("rumble on"); }
     else if (c == 'l') { static uint8_t m = 0; const uint8_t modes[] = {0, 1, 2, 3, 4, 8, 9, 1}; m = (m + 1) % sizeof(modes); for (int i = 0; i < MAX_PADS; i++) gip_led(i, modes[m], 20); USBSerial.printf("led mode %u\n", modes[m]); }
     else if (c == 's') status();
+    else if (c == 'w') { int q = radio_tx_power() >= 78 ? 44 : radio_tx_power() + 17; radio_set_tx_power(q); USBSerial.printf("tx power set to %d (x0.25 dBm) = %.1f dBm\n", radio_tx_power(), radio_tx_power() / 4.0f); }
+    else if (c == 'x') { static char cb[1800]; radio_census(0, cb, sizeof(cb)); USBSerial.printf("CENSUS (controller in slot 0)\n    %s", cb); }
+    else if (c == 'k') { int f = radio_forced_channel(); f = f == 0 ? 1 : f == 1 ? 6 : f == 6 ? 11 : 0; radio_force_channel(f); USBSerial.printf("channel %s\n", f ? String(f).c_str() : "AUTO (scan)"); }
+    else if (c == 'e') { radio_tweak(!radio_tweaked()); USBSerial.printf("radio tweaks %s\n", radio_tweaked() ? "ON" : "off"); }
+    else if (c == 'z') { static char vb[3600]; radio_trace_vendor(vb, sizeof(vb)); USBSerial.printf("VENDOR FRAMES (type0/sub7), newest last\n%s", vb); }
+    else if (c == 'm') { radio_set_filter(radio_filter() ? 0 : 1); USBSerial.printf("rx filter = %s\n", radio_filter() ? "management+data only" : "everything"); }
     else if (c == '1') { gip_test_ack(0, 0); USBSerial.println("test: rumble+ack"); }
     else if (c == '2') { gip_test_ack(0, 1); USBSerial.println("test: rumble(internal)+ack"); }
     else if (c == '3') { gip_test_ack(0, 2); USBSerial.println("test: led+ack"); }

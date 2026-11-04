@@ -1,3 +1,5 @@
+#include "config.h"
+#ifndef XINPUT_MODE
 #include "hid.h"
 #include "USB.h"
 #include "USBHID.h"
@@ -149,3 +151,4 @@ bool hid_suspended() { return tud_suspended(); }
 bool hid_wake_host() { return tud_suspended() ? tud_remote_wakeup() : false; }
 uint32_t hid_reports_sent() { return sent; }
 uint32_t hid_rumble_msgs() { return rumbleMsgs; }
+#endif

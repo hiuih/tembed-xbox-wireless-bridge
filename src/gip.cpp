@@ -138,6 +138,10 @@ static void onInput(int i, const uint8_t *pl, uint32_t plen) {
   p.in.rx = (int16_t)u16(pl + 10);
   p.in.ry = (int16_t)~u16(pl + 12);
   if (plen == 44) p.in.share = pl[18] & 1;  // Series controllers: share byte at len-26
+  {
+    uint32_t t = millis(), d = t - p.lastInputAt;
+    if (p.inputCount) { int b = d < 10 ? 0 : d < 20 ? 1 : d < 40 ? 2 : d < 80 ? 3 : d < 160 ? 4 : 5; p.inHist[b]++; }
+  }
   p.inputCount++;
   p.lastInputAt = millis();
   if (p.stage != PAD_READY) becomeReady(i);   // reconnect without re-announce
@@ -152,7 +156,7 @@ static void handlePacket(int i, uint8_t cmd, uint8_t opt, uint8_t seq, uint32_t 
       uint8_t gap = (uint8_t)(seq - exp);
       if (gap && gap < 64) p.inputGaps += gap;
     }
-    v.lastAnySeq = seq; v.haveAnySeq = true;
+    v.lastAnySeq = seq; v.haveAnySeq = true; p.gipSeen++;
   }
   if (dbg && cmd != C_INPUT) Serial0Log(i, cmd, opt, seq, plen, coff);
   if (opt & O_CHUNK_START) { v.chunkTotal = coff; coff = 0; v.chunkCmd = cmd; v.chunkActive = v.chunkTotal <= CHUNK_MAX; }
