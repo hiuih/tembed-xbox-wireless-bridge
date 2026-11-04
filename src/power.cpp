@@ -38,3 +38,14 @@ bool power_report(char *buf, size_t n) {
            cs[(r0b >> 3) & 3], (r0b & 0x04) ? "" : " (power-NOT-good)");
   return true;
 }
+
+bool power_vbus_present() {
+  uint8_t r0b;
+  if (!rd(0x0b, r0b)) return true;       // can't tell: assume USB, which takes the safe (deep sleep) path
+  return (r0b & 0xE0) != 0;              // VBUS_STAT != 000
+}
+
+void power_ship_mode() {
+  uint8_t r09;
+  if (rd(0x09, r09)) wr(0x09, (r09 | 0x20) & ~0x08);   // BATFET_DIS=1, BATFET_DLY=0 (turn off immediately)
+}

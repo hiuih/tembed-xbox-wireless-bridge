@@ -303,3 +303,5 @@ void ui_begin() {
 }
 
 void ui_notify_pairing_done() {}
+
+void ui_off() { ledcWrite(0, 0); }

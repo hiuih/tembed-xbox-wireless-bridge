@@ -3,6 +3,14 @@
 #include "hid.h"
 #include "pairing.h"
 #include "bootguard.h"
+#if HAS_PMIC
+#include "powerbtn.h"
+#define POWER_HOLD() power_hold_progress()
+#else
+#define POWER_HOLD() 0.0f
+#endif
+
+static volatile bool ledsOff = false;
 
 static Adafruit_NeoPixel strip(LED_COUNT, PIN_LED, NEO_GRB + NEO_KHZ800);
 static uint32_t ringUntil = 0, ringColor = 0;
@@ -12,6 +20,8 @@ static int lastKnown = -1;
 static uint32_t pairStartedAt = 0;
 
 // Brightness is low on purpose: 8 LEDs at full tilt plus Wi-Fi TX can brown out a USB-powered board.
+void leds_off() { ledsOff = true; strip.clear(); strip.show(); }
+
 void leds_begin() { strip.begin(); strip.setBrightness(32); strip.clear(); strip.show(); }
 
 void leds_flash(uint8_t r, uint8_t g, uint8_t b, uint16_t ms) { ringColor = strip.Color(r, g, b); ringUntil = millis() + ms; }
@@ -26,6 +36,7 @@ void leds_pad_event(int slot, PadEvent ev) {
 static uint32_t col(uint8_t r, uint8_t g, uint8_t b) { return strip.Color(r, g, b); }
 
 void leds_tick() {
+  if (ledsOff) return;
   static uint32_t last = 0;
   uint32_t now = millis();
   if (now - last < 40) return;
@@ -71,7 +82,11 @@ void leds_tick() {
     return;
   }
 #endif
-  if (hold > 0.4f) {
+  float ph = POWER_HOLD();
+  if (ph > 0.15f) {   // power-off countdown: orange LEDs fill up over the 5 s hold
+    int n = (int)(ph * 8.0f) + 1;
+    for (int i = 0; i < n && i < 8; i++) strip.setPixelColor(i, col(255, 90, 0));
+  } else if (hold > 0.4f) {
     int n = (int)((hold - 0.4f) / 0.6f * 8.0f) + 1;
     for (int i = 0; i < n && i < 8; i++) strip.setPixelColor(i, col(255, 0, 0));
   } else if (ringFlash && !amberGap) {

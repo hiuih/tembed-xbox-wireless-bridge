@@ -12,6 +12,7 @@
 #include "knob.h"
 #if HAS_PMIC
 #include "power.h"
+#include "powerbtn.h"
 #endif
 #include "esp_task_wdt.h"
 
@@ -66,6 +67,9 @@ static void status() {
 
 void setup() {
   bootguard_begin();
+#if HAS_PMIC
+  powerbtn_begin();
+#endif
   esp_task_wdt_init(5, true);   // panic + reset if the main loop stalls for 5 s
   esp_task_wdt_add(NULL);
   pairing_begin();
@@ -108,6 +112,9 @@ void loop() {
   bootguard_tick();
   if (restartAt && (int32_t)(millis() - restartAt) >= 0) ESP.restart();
   boot_mark(7); knob_tick();
+#if HAS_PMIC
+  powerbtn_tick();
+#endif
   boot_mark(8); leds_tick();
   boot_mark(9);
 

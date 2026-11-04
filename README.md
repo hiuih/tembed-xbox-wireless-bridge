@@ -31,6 +31,8 @@ drivers (GPL). This project is not affiliated with Microsoft.
 | Click | Open / activate the selected item |
 | **Hold 10 seconds** | Reboot into the **bootloader** (the LED ring fills red as a warning) |
 
+**Power off (T-Embed):** hold the separate **user key (GPIO6, the other button, not the knob) for 5 seconds**. The ring fills orange as a countdown. On battery alone this is a real shutdown (wake with the PWR button). On USB power the charger chip cannot cut power, so it goes to deep sleep instead: screen, LEDs and radio off, and it drops off the computer's USB. Press the same key to wake it.
+
 ## The LED ring (the main status display)
 
 | What you see | Meaning |

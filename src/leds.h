@@ -9,5 +9,6 @@
 //  white pulse = woke the computer   purple = restarting   orange pulse = rumble test   red fill = bootloader hold
 void leds_begin();
 void leds_tick();
+void leds_off();           // all dark (used before powering off)
 void leds_flash(uint8_t r, uint8_t g, uint8_t b, uint16_t ms);   // whole ring
 void leds_pad_event(int slot, PadEvent ev);                       // per-controller flashes
