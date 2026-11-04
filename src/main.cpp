@@ -30,7 +30,7 @@ static void onPad(int slot, PadEvent ev) {
   }
   // More controllers than USB gamepads exposed: expose more (needs a USB re-enumeration = restart).
   if (ev == PADEV_READY && slot >= hid_slots() && !restartAt) {
-    hid_request_slots(slot + 1);
+    if (slot + 1 > pairing_count()) hid_request_slots(slot + 1);   // normally the paired count already covers it
     restartAt = millis() + 2500;
     leds_flash(170, 0, 255, 2500);
     USBSerial.println("new controller needs more USB gamepads: restarting to expose them");

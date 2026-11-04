@@ -2,6 +2,7 @@
 #include "USB.h"
 #include "USBHID.h"
 #include <Preferences.h>
+#include "pairing.h"
 
 extern "C" bool tud_hid_n_ready(uint8_t instance);
 extern "C" bool tud_hid_n_report(uint8_t instance, uint8_t report_id, void const *report, uint16_t len);
@@ -60,8 +61,10 @@ static XboxHidDevice dev;
 void hid_begin() {
   Preferences p;
   p.begin("xbhid", true);
-  nSlots = p.getUChar("slots", 4);
+  int manual = p.getUChar("slots", 0);      // optional minimum set from the menu (0 = automatic)
   p.end();
+  nSlots = manual;
+  if (pairing_count() > nSlots) nSlots = pairing_count();   // automatic: one USB gamepad per paired controller
   if (nSlots < 1) nSlots = 1;
   if (nSlots > MAX_PADS) nSlots = MAX_PADS;
   descLen = 0;
