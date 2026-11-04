@@ -29,7 +29,7 @@ static void onPad(int slot, PadEvent ev) {
     if (hid_wake_host()) { leds_flash(140, 140, 140, 600); USBSerial.println("USB remote wakeup sent"); }
   }
   // More controllers than USB gamepads exposed: expose more (needs a USB re-enumeration = restart).
-  if (ev == PADEV_READY && slot >= hid_slots() && !restartAt) {
+  if (ev == PADEV_READY && slot >= hid_slots() && hid_slots() < hid_max_slots() && !restartAt) {
     if (slot + 1 > pairing_count()) hid_request_slots(slot + 1);   // normally the paired count already covers it
     restartAt = millis() + 2500;
     leds_flash(170, 0, 255, 2500);
@@ -134,6 +134,9 @@ void loop() {
     else if (c == 'k') { int f = radio_forced_channel(); f = f == 0 ? 1 : f == 1 ? 6 : f == 6 ? 11 : 0; radio_force_channel(f); USBSerial.printf("channel %s\n", f ? String(f).c_str() : "AUTO (scan)"); }
     else if (c == 'e') { radio_tweak(!radio_tweaked()); USBSerial.printf("radio tweaks %s\n", radio_tweaked() ? "ON" : "off"); }
     else if (c == 'z') { static char vb[3600]; radio_trace_vendor(vb, sizeof(vb)); USBSerial.printf("VENDOR FRAMES (type0/sub7), newest last\n%s", vb); }
+#ifdef XINPUT_MODE
+    else if (c == 'r') { static char rb[700]; xinput_dump(rb, sizeof(rb)); USBSerial.print(rb); }
+#endif
     else if (c == 'm') { radio_set_filter(radio_filter() ? 0 : 1); USBSerial.printf("rx filter = %s\n", radio_filter() ? "management+data only" : "everything"); }
     else if (c == '1') { gip_test_ack(0, 0); USBSerial.println("test: rumble+ack"); }
     else if (c == '2') { gip_test_ack(0, 1); USBSerial.println("test: rumble(internal)+ack"); }

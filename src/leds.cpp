@@ -59,6 +59,15 @@ void leds_tick() {
   bool amberGap = ringFlash && ringColor == col(255, 140, 0) && ((now / 140) % 2);
 
 #if LED_COUNT == 1
+#ifdef XINPUT_MODE
+  if (now < 6000) {   // right after boot: purple blinks = XInput layout (1 = one pad, 2 = two pads wired-style, 3 = two pads receiver-style)
+    int m = xinput_mode() + 1;
+    uint32_t period = m * 500 + 1100, t = now % period;
+    strip.setPixelColor(0, (t < (uint32_t)m * 500 && (t % 500) < 250) ? col(150, 0, 255) : 0);
+    strip.show();
+    return;
+  }
+#endif
   {   // one RGB LED: pairing = fast blue blink, controllers = green blinks (one per controller), idle = amber breathing
     uint32_t c = 0;
     int ready = 0, connecting = 0, low = 0;

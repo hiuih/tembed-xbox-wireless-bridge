@@ -172,20 +172,32 @@ Only the T-Embed build has been tested on real hardware; this one compiles but h
 
 Games like FIFA treat a generic USB gamepad as a PlayStation-style DirectInput device. This build instead
 presents the bridge as an **Xbox 360 (XInput) controller** (USB `045E:028E`), so Windows and games use the Xbox
-mapping and glyphs. Each paired controller is one XInput interface (player slot). **Status: compiles and the
-radio side is verified; the Windows side is being tested.** Multiple controllers on one USB device is the part
-Windows may not accept; if only one shows up, that's the limit.
+mapping and glyphs. **One controller works on Windows.** Two controllers in one USB device is experimental.
 
 - XInput must be the **only USB function**: no gamepad-HID, no USB serial. The log/console is the board's **UART
-  USB-C port** (115200 baud); the **native/OTG port** goes to the PC.
+  USB-C port** (115200 baud); the **native/OTG port** goes to the PC. You can't use both ports at once if your
+  cables don't reach, so use the UART port to flash and read logs, then move the cable to the PC.
 - Flash through the UART port (no 1200-baud touch here):
   `pio run -e s3_xinput -t upload --upload-port /dev/cu.usbmodemXXXX`
+- Interface N carries the N-th controller that connected (player 1 = first connected).
 - Rumble requests from games are received and forwarded, but rumble still does not work on the radio side.
 - Mac/Linux: use the HID builds instead.
 
-Extra serial commands in this build: `x` census of everything the controller transmits (frame types, ack policy,
-PHY rate), `z` timing trace of the controller's vendor frames, `w` cycle TX power, `m` toggle RX filter,
-`e` toggle radio tweaks, `k` pin the channel (1/6/11/auto).
+**Layouts**: hold the board's **BOOT button for 4 seconds** to cycle; the layout is stored in flash and shown by
+purple LED blinks for the first 6 seconds after boot:
+
+| Blinks | Layout |
+|---|---|
+| 1 | one Xbox controller interface (default, known to work on Windows) |
+| 2 | two interfaces, real-pad class descriptor (experimental) |
+| 3 | two interfaces, receiver-style class descriptor, as in github.com/Berghopper/360-w-raw-gadget (MIT) (experimental) |
+
+If only one controller shows up in Windows with a two-controller layout, try the other one; if neither works,
+Windows does not accept several XInput interfaces in this device.
+
+Extra serial commands in this build (UART): `r` dump what each XInput interface is being fed, `x` census of
+everything the controller transmits (frame types, ack policy, PHY rate), `z` timing trace of the controller's
+vendor frames, `w` cycle TX power, `m` toggle RX filter, `e` toggle radio tweaks, `k` pin the channel (1/6/11/auto).
 
 ### Wireless link measurements (T-Embed + bare S3, Series controller)
 
