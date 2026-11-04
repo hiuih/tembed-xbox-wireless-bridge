@@ -69,11 +69,12 @@ void leds_tick() {
     }
     if (hold > 0.4f) c = (now / 100) % 2 ? col(255, 0, 0) : 0;
     else if (ringFlash && !amberGap) c = ringColor;
-    else if (pairing) c = (now / 150) % 2 ? col(0, 40, 255) : col(0, 6, 30);
+    else if (pairing && !ready) c = (now / 150) % 2 ? col(0, 40, 255) : col(0, 6, 30);   // pairing window open, nobody connected yet
     else if (ready) {
       // N green blinks (red if that controller's battery is low), then a pause; the pause shows the USB state
       uint32_t cycle = ready * 400 + 900, t = now % cycle;
       if (t < (uint32_t)ready * 400) c = (t % 400) < 200 ? ((int)(t / 400) < low ? col(220, 0, 0) : col(0, 200, 0)) : 0;
+      else if (pairing) c = (now / 150) % 2 ? col(0, 40, 255) : col(0, 6, 30);          // pause shows 'pairing still open' (fast blue)
       else c = !hid_mounted() ? col(120, 0, 0) : hid_suspended() ? col(0, 30, 120) : 0;
     } else if (connecting) c = col(200, 150, 0);
     else { uint8_t v = 10 + (uint8_t)(20 * (1 + sinf(now / 600.0f))); c = col(v, v / 3, 0); }

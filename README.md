@@ -176,6 +176,7 @@ It can wake a *sleeping* computer, not one that is shut down. Untested so far.
 
 ## Known issues
 
+- **A browser can block the gamepad on macOS.** If Gamepad Tester shows nothing and `hidutil list` has no `0x303a` entry, check whether a Chromium-based browser (it showed up as a `Dia` user client in `ioreg`) has the USB device open. Quit it completely (Cmd+Q) and replug the board's native USB port: the gamepad attaches normally. Not seen on Windows.
 - **Rumble does not work.** The controller acknowledges rumble packets at the protocol level and
   rumbles fine over Bluetooth, but ignores them from the bridge. Suspected cause: the bridge does not
   perform the Xbox security handshake (xone's `auth` code) that a real dongle performs. Not confirmed.
