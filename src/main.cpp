@@ -5,10 +5,14 @@
 #include "pairing.h"
 #include "hid.h"
 #include "bootguard.h"
+#if HAS_SCREEN
 #include "ui.h"
+#endif
 #include "leds.h"
 #include "knob.h"
+#if HAS_PMIC
 #include "power.h"
+#endif
 #include "esp_task_wdt.h"
 
 static uint32_t restartAt = 0;
@@ -42,7 +46,9 @@ void gipLogTx(int i, uint8_t cmd, uint8_t opt, uint8_t seq, int plen, bool ok) {
 static void status() {
   static uint32_t lastIn[MAX_PADS];
   const RadioStats &s = radio_stats();
+#if HAS_PMIC
   { char pb[96]; power_report(pb, sizeof(pb)); USBSerial.printf("power: %s\n", pb); }
+#endif
   USBSerial.printf("last reset: %s (crash count %lu, last loop step before it: %u)\n", boot_reason(), (unsigned long)boot_crash_count(), boot_prev_mark());
   USBSerial.printf("usb mounted=%d suspended=%d slots=%d reports=%lu rumbleMsgs=%lu\n", hid_mounted(), hid_suspended(), hid_slots(), (unsigned long)hid_reports_sent(), (unsigned long)hid_rumble_msgs());
   USBSerial.printf("== ch%u %s pairing=%d known=%d | rx=%lu toMe=%lu dup=%lu qdrop=%lu txerr=%lu\n", radio_channel(),
@@ -67,12 +73,19 @@ void setup() {
   uint32_t t0 = millis();
   while (!hid_mounted() && millis() - t0 < 3000) delay(10);   // let the computer enumerate us
   delay(300);
+#if HAS_PMIC
   power_begin();
+#endif
   radio_begin();
   delay(200);
   leds_begin();
+#if HAS_SCREEN
   delay(200);
   ui_begin();
+#endif
+#ifdef AUTO_PAIR_BOOT_MS
+  pairing_start(AUTO_PAIR_BOOT_MS);   // headless: pairing window opens at every power-up
+#endif
   gip_begin(onPad);
   USBSerial.printf("XBOX BRIDGE ready, known controllers: %d\n", pairing_count());
   USBSerial.println("keys: s=status B=bootloader R=restart p=pairing f=forget-all v=rumble l=led d=debug");

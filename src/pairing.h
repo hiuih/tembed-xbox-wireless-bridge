@@ -12,7 +12,7 @@ bool pairing_remove(const uint8_t *mac);        // forget one controller
 const uint8_t *pairing_mac(int idx);
 
 // Pairing window: open for 60 s, sets the beacon pair flag.
-void pairing_start();
+void pairing_start(uint32_t ms = 60000);
 void pairing_stop();
 bool pairing_active();                          // window open (accept new controllers)
 bool pairing_beacon_flag();                     // pair flag to advertise

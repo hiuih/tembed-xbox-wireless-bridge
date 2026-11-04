@@ -20,6 +20,7 @@ drivers (GPL). This project is not affiliated with Microsoft.
 | **Rumble / vibration** | **does NOT work** (see Known issues) |
 | Controller LED control (Xbox button light) | sent, **unconfirmed** |
 | Encryption / authentication handshake | not implemented |
+| Bare ESP32-S3 (no screen/buttons) build `s3_headless` | compiles, **not yet run on hardware** |
 
 ## The knob (rotary encoder with a push button)
 
@@ -134,6 +135,37 @@ Build only: `pio run -e tembed`.
    *Always / Automatically when unlocked*, or the Mac can hold the board back at an "Allow accessory"
    prompt after every reboot.
 
+## Bare ESP32-S3 board (no screen, no buttons): the `s3_headless` build
+
+Works on a plain ESP32-S3 dev board (for example the ESP32-S3-DevKitC-1). Nothing needs wiring.
+
+**Pairing with no hardware at all:** every time the board powers up, a **2-minute pairing window opens
+automatically**. Plug it in, then hold the small Pair button on the controller until it blinks fast. To pair
+another controller later, unplug and replug the board (the paired list is kept). Optional extras:
+- the board's **BOOT button** (GPIO0): hold 1 second to toggle pairing, hold 10 seconds for the bootloader;
+- the **serial console** commands above (`p` pair, `f` forget all, `s` status...);
+- the board's **RGB LED** (GPIO48 by default; `-DLED_PIN=38` for v1.1 boards):
+
+| LED | Meaning |
+|---|---|
+| Fast blue blinking | Pairing window open |
+| Green flashes, one per connected controller, then a pause | Connected (red flash = that controller's battery is low) |
+| In the pause: dim red / dim blue | USB not connected / computer asleep |
+| Solid yellow | A controller is connecting |
+| Amber breathing | Idle, waiting for a controller |
+| Whole-LED flash | Green = paired, white = woke the computer, purple = restarting |
+
+**Use the board's native USB port** (the one labelled *USB*, wired to GPIO19/20), not the UART/COM one.
+
+Build and flash (no buttons for a blank board or one already running this firmware):
+
+```sh
+~/.local/pipx/venvs/platformio/bin/python tools/flash.py s3_headless
+```
+
+If the board is running some other firmware, hold its BOOT button while plugging it in once, to start it in the bootloader.
+Only the T-Embed build has been tested on real hardware; this one compiles but has not been run yet.
+
 ## Waking the computer
 
 When the computer is suspended, pressing the Xbox button (or a controller connecting) sends a **USB remote
@@ -159,7 +191,7 @@ src/gip.*        Per-controller Game Input Protocol state machine
 src/pairing.*    Paired-controller list (flash) and pairing window
 src/hid.*        USB HID gamepads (TinyUSB) and the serial port
 src/ui.*         Screen + knob menus
-src/leds.*       LED ring status display
+src/leds.*       LED ring (T-Embed) / single RGB LED (headless) status display
 src/knob.*       Hold-to-pair
 src/bootguard.*  Crash-loop guard, reset reason, software bootloader entry
 src/power.*      Charger (BQ25896) status report

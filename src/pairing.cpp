@@ -58,7 +58,7 @@ bool pairing_remove(const uint8_t *mac) {
   return true;
 }
 
-void pairing_start() { windowUntil = millis() + 60000; flagUntil = windowUntil; }
+void pairing_start(uint32_t ms) { windowUntil = millis() + ms; flagUntil = windowUntil; }
 void pairing_stop() { windowUntil = 0; flagUntil = 0; }
 bool pairing_active() { return windowUntil && (int32_t)(windowUntil - millis()) > 0; }
 bool pairing_beacon_flag() { return flagUntil && (int32_t)(flagUntil - millis()) > 0; }

@@ -26,7 +26,28 @@ static const uint8_t SCAN_CHANNELS[] = {1, 6, 11};
 #define PIN_ENC_A 4
 #define PIN_ENC_B 5
 #define PIN_ENC_KEY 0
-#define PIN_LED 14        // 8x WS2812 ring around the knob
+// Board variants. T-Embed (default): screen + 8-LED ring + knob + charger chip.
+// Headless (-DHEADLESS=1): a bare ESP32-S3 board: no screen/ring/charger; one optional RGB LED, the BOOT button
+// (GPIO0) as an optional pair button, and a pairing window that opens automatically at power-up.
+#ifdef HEADLESS
+  #define HAS_SCREEN 0
+  #define HAS_PMIC 0
+  #ifndef LED_COUNT
+    #define LED_COUNT 1
+  #endif
+  #ifndef LED_PIN
+    #define LED_PIN 48            // ESP32-S3-DevKitC-1 v1.0 RGB LED (v1.1 boards use 38): -DLED_PIN=38
+  #endif
+  #ifndef AUTO_PAIR_BOOT_MS
+    #define AUTO_PAIR_BOOT_MS 120000
+  #endif
+#else
+  #define HAS_SCREEN 1
+  #define HAS_PMIC 1
+  #define LED_COUNT 8
+  #define LED_PIN 14              // 8x WS2812 ring around the knob
+#endif
+#define PIN_LED LED_PIN
 #define PIN_CC1101_CS 12
 #define PIN_SD_CS 13
 

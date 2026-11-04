@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """One-command flash for the T-Embed Xbox bridge. No buttons needed.
 
-Usage:  ~/.local/pipx/venvs/platformio/bin/python tools/flash.py     (needs pyserial, e.g. PlatformIO's venv)
+Usage:  ~/.local/pipx/venvs/platformio/bin/python tools/flash.py [env]   (env: tembed (default) or s3_headless)
+        needs pyserial, e.g. PlatformIO's venv
 
  1. If the board is running the app, ask it to reboot into the ROM bootloader (1200 baud touch).
  2. Wait for the bootloader's serial port to appear (the port name changes).
@@ -49,6 +50,6 @@ def main():
     if not rom:
         sys.exit("Board not found. Plug it in; if the macOS 'Allow accessory' prompt is showing, click Allow.")
     print("bootloader on", rom)
-    sys.exit(subprocess.run([PIO, "run", "-e", "tembed", "-t", "upload", "--upload-port", rom], cwd=ROOT).returncode)
+    sys.exit(subprocess.run([PIO, "run", "-e", (sys.argv[1] if len(sys.argv) > 1 else "tembed"), "-t", "upload", "--upload-port", rom], cwd=ROOT).returncode)
 
 main()
