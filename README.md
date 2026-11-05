@@ -226,6 +226,11 @@ It can wake a *sleeping* computer, not one that is shut down. Untested so far.
 - Multiple controllers at once, USB wake, and the LED/Share-button decoding are untested.
 - The unit's display is damaged, so the screen layout is limited to the left part; use the LED ring.
 
+## Protocol documentation
+
+How the Xbox Wireless controller link works, and what you need to implement it on your own hardware:
+[docs/PROTOCOL.md](docs/PROTOCOL.md) (every claim is tagged observed / from the xone driver / unknown).
+
 ## Layout
 
 ```
