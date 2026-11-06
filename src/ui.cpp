@@ -1,287 +1,255 @@
+// T-Embed UI: display, navigation, and live data. Drawing is in ui_screens*.cpp (pure, also run by tools/sim).
+#include "config.h"
+#if HAS_SCREEN
 #include "ui.h"
 #include <SPI.h>
-#include <Adafruit_GFX.h>
 #include <Adafruit_ST7789.h>
+#include "esp_task_wdt.h"
+#include "esp_mac.h"
+#include "ui_screens.h"
+#include "settings.h"
+#include "stats.h"
+#include "nrf24.h"
+#include "encoder.h"
+#include "knob.h"
+#include "powerbtn.h"
+#include "pairing.h"
 #include "gip.h"
 #include "hid.h"
-#include "pairing.h"
-#include "bootguard.h"
 #include "leds.h"
-#include "esp_task_wdt.h"
+#include "power.h"
+#include "bootguard.h"
+#include "radio.h"
+
+#define BAND_H 85
+#define FRAME_MS 50
 
 static Adafruit_ST7789 tft(&SPI, PIN_LCD_CS, PIN_LCD_DC, -1);
-static GFXcanvas16 *cv;
-
-#define C_BG 0x0000
-#define C_FG 0xFFFF
-#define C_DIM 0x7BEF
-#define C_ACC 0x07FF
-#define C_GRN 0x07E0
-#define C_RED 0xF800
-#define C_YEL 0xFFE0
-#define C_BLU 0x021F
-#define C_SEL 0x18E3
-
-// ---------------------------------------------------------------- input
-static volatile int encDelta = 0;
-static void IRAM_ATTR encIsr() { encDelta += digitalRead(PIN_ENC_B) ? -1 : 1; }
-
-enum Btn { B_NONE, B_CLICK, B_LONG };
-static Btn pollButton() {
-  static uint32_t downAt = 0, lastEdge = 0;
-  static bool down = false, longDone = false;
-  bool now = digitalRead(PIN_ENC_KEY) == LOW;
-  uint32_t t = millis();
-  if (now != down && t - lastEdge > 25) {
-    lastEdge = t; down = now;
-    if (down) { downAt = t; longDone = false; }
-    else if (!longDone && t - downAt < 1000) return B_CLICK;
-  }
-  if (down && !longDone && t - downAt >= 1000) { longDone = true; return B_LONG; }
-  return B_NONE;
-}
-
-// ---------------------------------------------------------------- state
-enum Screen { S_LIST, S_PAD, S_SETTINGS, S_PAIR };
-static Screen screen = S_LIST;
-static int sel = 0;              // selection in current list
-static int padSlot = -1;         // detail screen: live slot, or -1 for an offline known controller
-static int padKnown = -1;        // detail screen: index in the paired list
-static uint32_t toastUntil = 0;
-static char toast[32];
-static uint32_t rumbleOffAt = 0;
+static GFXcanvas16 *band = nullptr;
+static Snap snap;
+static Nav nav;
+static int liveSlot[MAX_PADS];            // snapshot index (paired-list index) -> live GIP slot, -1 if offline
+static uint32_t lastActivity = 0, lastStepMs = 0, rumbleOffAt = 0;
 static int rumbleSlot = -1;
-static uint32_t pairDoneAt = 0;
-static int knownAtPairStart = 0;
-static uint8_t ledLevel[MAX_PADS];
+static uint8_t ledLevelPad[MAX_PADS];
+static PowerInfo power;
+static uint32_t lastPower = 0;
 
-static void say(const char *m) { strncpy(toast, m, sizeof(toast) - 1); toast[sizeof(toast) - 1] = 0; toastUntil = millis() + 2500; }
-
-struct Row { int kind; int slot; int known; };   // kind: 0 live, 1 offline, 2 pair, 3 settings
-static Row rows[MAX_PADS * 2 + 2];
-static int nRows = 0;
-
-static void buildRows() {
-  nRows = 0;
-  bool shown[MAX_PADS] = {false};
-  for (int i = 0; i < MAX_PADS; i++) {
-    const Pad &p = gip_pad(i);
-    if (p.stage == PAD_FREE) continue;
-    rows[nRows++] = {0, i, pairing_index(p.mac)};
-    if (pairing_index(p.mac) >= 0) shown[pairing_index(p.mac)] = true;
-  }
-  for (int k = 0; k < pairing_count(); k++) if (!shown[k]) rows[nRows++] = {1, -1, k};
-  rows[nRows++] = {2, -1, -1};
-  rows[nRows++] = {3, -1, -1};
-}
-
-static const char *padName(const Pad &p) {
-  switch (p.pid) {
+// ---------------------------------------------------------------- helpers
+static const char *padName(uint16_t pid) {
+  switch (pid) {
     case 0x0b12: case 0x0b13: return "Series X|S";
     case 0x02e0: case 0x02fd: case 0x02ea: return "One S";
     case 0x0b00: return "Elite 2";
     case 0x02e3: return "Elite";
-    default: return "Controller";
+    default: return "Xbox controller";
   }
 }
 
-// ---------------------------------------------------------------- drawing helpers
-static void txt(int x, int y, const char *s, uint16_t c, int sz = 1) { cv->setTextSize(sz); cv->setTextColor(c); cv->setCursor(x, y); cv->print(s); }
-
-static void drawBattery(int x, int y, const Pad &p) {
-  cv->drawRect(x, y, 18, 9, C_DIM); cv->fillRect(x + 18, y + 2, 2, 5, C_DIM);
-  if (!p.battKnown) { txt(x + 6, y + 1, "?", C_DIM); return; }
-  int bars = p.battLevel + 1; if (bars > 4) bars = 4;
-  uint16_t c = p.battLevel == 0 ? C_RED : (p.battLevel == 1 ? C_YEL : C_GRN);
-  for (int i = 0; i < bars; i++) cv->fillRect(x + 2 + i * 4, y + 2, 3, 5, c);
+static void toast(const char *m) {
+  strncpy(nav.toast, m, sizeof(nav.toast) - 1);
+  nav.toast[sizeof(nav.toast) - 1] = 0;
+  nav.toastUntilMs = millis() + 1800;
 }
 
-static void drawSignal(int x, int y, int rssi) {
-  int bars = rssi > -45 ? 4 : rssi > -55 ? 3 : rssi > -65 ? 2 : rssi > -75 ? 1 : 0;
-  for (int i = 0; i < 4; i++) {
-    int h = 3 + i * 2;
-    if (i < bars) cv->fillRect(x + i * 4, y + 9 - h, 3, h, C_GRN); else cv->drawRect(x + i * 4, y + 9 - h, 3, h, C_DIM);
-  }
+static void goTo(Screen sc, int sel = 0) {
+  nav.screen = sc; nav.sel = sel; nav.scroll = 0; nav.scrollAnim = 0; nav.confirm = false;
+  nav.screenSinceMs = millis();
+  if (sc == SC_HOME) { nav.selX = 8 + (sel % 3) * 104; nav.selY = 28 + (sel / 3) * 64; }
 }
 
-static void header(const char *title) {
-  cv->fillRect(0, 0, UI_W, 15, C_BLU);
-  txt(4, 4, title, C_FG);
-  const char *u = hid_mounted() ? (hid_suspended() ? "zz" : "USB") : "no";
-  uint16_t uc = hid_mounted() ? (hid_suspended() ? C_YEL : C_GRN) : C_RED;
-  txt(UI_W - 24, 4, u, uc);
+static void setBacklight(uint8_t idx) {
+  static const uint8_t duty[5] = {30, 70, 120, 190, 255};
+  ledcWrite(0, duty[idx % 5]);
 }
 
-static void footer(const char *s) { cv->fillRect(0, UI_H - 12, UI_W, 12, C_BG); txt(2, UI_H - 10, s, C_DIM); }
+// ---------------------------------------------------------------- live data
+static void fillSnap() {
+  uint32_t now = millis();
+  snap.nowMs = now;
+  snap.uptimeS = now / 1000;
+  snap.usbMounted = hid_mounted();
+  snap.usbSuspended = hid_suspended();
+  snap.gamepads = hid_slots();
+  snap.gamepadsMax = hid_max_slots();
+  snap.style = xinput_style();
+  snap.pairing = pairing_active();
+  snap.pairLeftMs = pairing_ms_left();
+  snap.channel = radio_channel();
+  snap.scanning = radio_scanning();
+  snap.nKnown = pairing_count();
+  snap.pmicOk = power.vbat > 0;
+  snap.vbusPresent = power.vbusPresent; snap.charging = power.charging;
+  snap.battPct = power.pct; snap.vbat = power.vbat; snap.vbus = power.vbus; snap.vsys = power.vsys; snap.chgmA = power.chgmA;
+  stats_fill(snap);
+  snap.nrfOk = nrf24_ok();
+  if (snap.nrfOk) { memcpy(snap.spec, nrf24_occupancy(), 84); memcpy(snap.peak, nrf24_peak(), 84); }
+  snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
+  snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
+  snap.fwVersion = "0.2";
 
-static void drawToast() {
-  if (millis() < toastUntil) { cv->fillRect(8, UI_H / 2 - 12, UI_W - 16, 22, C_FG); txt(14, UI_H / 2 - 5, toast, C_BG); }
-}
-
-static void menuLine(int y, const char *s, bool selected, uint16_t c = C_FG) {
-  if (selected) { cv->fillRect(0, y - 2, UI_W, 14, C_SEL); cv->drawFastVLine(0, y - 2, 14, C_ACC); }
-  txt(8, y + 1, s, selected ? C_ACC : c);
-}
-
-// ---------------------------------------------------------------- screens
-static void drawList() {
-  header("XBOX BRIDGE");
-  int visible = 5, first = sel >= visible ? sel - visible + 1 : 0;
-  for (int v = 0; v < visible && first + v < nRows; v++) {
-    int i = first + v, y = 19 + v * 27;
-    Row &r = rows[i];
-    bool s = (i == sel);
-    if (s) { cv->fillRect(0, y - 2, UI_W, 26, C_SEL); cv->drawFastVLine(0, y - 2, 26, C_ACC); }
-    if (r.kind == 0) {
-      const Pad &p = gip_pad(r.slot);
-      uint16_t dot = p.stage == PAD_READY ? C_GRN : C_YEL;
-      cv->fillCircle(12, y + 10, 5, dot);
-      char b[24]; snprintf(b, sizeof(b), "P%d %s", r.slot + 1, padName(p)); txt(24, y + 2, b, s ? C_ACC : C_FG);
-      txt(24, y + 14, p.stage == PAD_READY ? "connected" : "connecting...", C_DIM);
-      drawBattery(UI_W - 26, y + 2, p); drawSignal(UI_W - 26, y + 13, p.rssi);
-    } else if (r.kind == 1) {
-      cv->drawCircle(12, y + 10, 5, C_DIM);
-      char b[24]; snprintf(b, sizeof(b), "Paired #%d", r.known + 1); txt(24, y + 2, b, C_DIM);
-      txt(24, y + 14, "offline - press Xbox btn", C_DIM);
-    } else if (r.kind == 2) {
-      txt(10, y + 2, "+ Pair controller", s ? C_ACC : C_GRN);
-      txt(10, y + 14, "click to start", C_DIM);
-    } else {
-      txt(10, y + 2, "Settings", s ? C_ACC : C_FG);
-      char b[28]; snprintf(b, sizeof(b), "slots %d  ch%u", hid_slots(), radio_channel()); txt(10, y + 14, b, C_DIM);
+  // controllers = the paired list; a live slot with the same MAC supplies the live data
+  snap.nReady = 0;
+  for (int k = 0; k < MAX_PADS; k++) {
+    PadView &v = snap.pad[k];
+    liveSlot[k] = -1;
+    if (k >= pairing_count()) { v.present = false; continue; }
+    const uint8_t *mac = pairing_mac(k);
+    for (int i = 0; i < MAX_PADS; i++) {
+      const Pad &p = gip_pad(i);
+      if (p.stage != PAD_FREE && !memcmp(p.mac, mac, 6)) { liveSlot[k] = i; break; }
     }
-  }
-  footer("hold knob 1s = pair");
-}
-
-static void drawStick(int cx, int cy, int x, int y, bool pressed) {
-  cv->drawCircle(cx, cy, 20, pressed ? C_ACC : C_DIM);
-  cv->fillCircle(cx + x * 16 / 32768, cy + y * 16 / 32768, 4, pressed ? C_ACC : C_FG);
-}
-
-static const char *padItems[] = {"Rumble test", "LED brightness", "Disconnect", "Forget controller", "Back"};
-
-static void drawPad() {
-  char title[24];
-  if (padSlot >= 0) { const Pad &p = gip_pad(padSlot); snprintf(title, sizeof(title), "P%d %s", padSlot + 1, padName(p)); }
-  else snprintf(title, sizeof(title), "Paired #%d (offline)", padKnown + 1);
-  header(title);
-  int y0 = 20;
-  if (padSlot >= 0 && gip_pad(padSlot).stage == PAD_READY) {
-    const PadInput &in = gip_pad(padSlot).in;
-    drawStick(34, y0 + 22, in.lx, in.ly, in.buttons & GIP_BTN_L3);
-    drawStick(UI_W - 34, y0 + 22, in.rx, in.ry, in.buttons & GIP_BTN_R3);
-    cv->drawRect(62, y0, 14, 12, C_DIM); cv->fillRect(63, y0 + 11 - in.lt * 10 / 1023, 12, in.lt * 10 / 1023, C_ACC);
-    cv->drawRect(UI_W - 76, y0, 14, 12, C_DIM); cv->fillRect(UI_W - 75, y0 + 11 - in.rt * 10 / 1023, 12, in.rt * 10 / 1023, C_ACC);
-    struct { const char *n; uint16_t m; uint16_t c; int x; int y; } bt[] = {
-      {"A", GIP_BTN_A, C_GRN, 80, y0 + 20}, {"B", GIP_BTN_B, C_RED, 92, y0 + 14}, {"X", GIP_BTN_X, C_BLU, 68, y0 + 14}, {"Y", GIP_BTN_Y, C_YEL, 80, y0 + 8}};
-    for (auto &b : bt) { bool on = in.buttons & b.m; cv->drawCircle(b.x + 3, b.y + 3, 5, b.c); if (on) cv->fillCircle(b.x + 3, b.y + 3, 5, b.c); }
-    txt(54, y0 + 32, (in.buttons & GIP_BTN_LB) ? "LB" : "  ", C_ACC); txt(104, y0 + 32, (in.buttons & GIP_BTN_RB) ? "RB" : "  ", C_ACC);
-    cv->drawFastHLine(0, y0 + 48, UI_W, C_DIM);
-  } else {
-    txt(8, y0 + 8, padSlot >= 0 ? "connecting..." : "not connected", C_DIM);
-  }
-  int my = y0 + 54, n = padSlot >= 0 ? 5 : 2;
-  for (int i = 0; i < n; i++) {
-    const char *name = padSlot >= 0 ? padItems[i] : (i == 0 ? padItems[3] : padItems[4]);
-    char b[28];
-    if (padSlot >= 0 && i == 1) snprintf(b, sizeof(b), "LED brightness: %d", ledLevel[padSlot] ? ledLevel[padSlot] : 20); else snprintf(b, sizeof(b), "%s", name);
-    menuLine(my + i * 16, b, sel == i, (padSlot >= 0 && i == 3) ? C_RED : C_FG);
+    v.present = true;
+    if (liveSlot[k] < 0) { v.online = false; v.connecting = false; strcpy(v.name, "Xbox controller"); v.rssi = -99; v.rateHz = 0; continue; }
+    const Pad &p = gip_pad(liveSlot[k]);
+    v.online = p.stage == PAD_READY;
+    v.connecting = !v.online;
+    if (v.online) snap.nReady++;
+    strncpy(v.name, padName(p.pid), sizeof(v.name) - 1); v.name[sizeof(v.name) - 1] = 0;
+    v.rssi = p.rssi;
+    v.battKnown = p.battKnown; v.battType = p.battType; v.battLevel = p.battLevel;
+    v.in = p.in;
+    v.rateHz = stats_pad_rate(liveSlot[k]);
+    uint32_t tot = p.inputGaps + p.gipSeen;
+    v.lossPermille = tot ? (uint16_t)(p.inputGaps * 1000UL / tot) : 0;
+    v.upS = (now - p.connectedAt) / 1000;
   }
 }
 
-static void drawSettings() {
-  header("SETTINGS");
-  char b[32];
-  snprintf(b, sizeof(b), "USB gamepads: %d", hid_slots());
-  menuLine(24, b, sel == 0); txt(8, 40, "(restarts the bridge)", C_DIM);
-  menuLine(58, "Forget ALL controllers", sel == 1, C_RED);
-  menuLine(76, "Reboot to bootloader", sel == 2);
-  menuLine(94, "Back", sel == 3);
-  snprintf(b, sizeof(b), "paired %d  ch%u", pairing_count(), radio_channel()); txt(8, 120, b, C_DIM);
-  txt(8, 134, "hold knob 10s = bootloader", C_DIM);
+static void updateTrails() {
+  for (int k = 0; k < MAX_PADS; k++) {
+    PadView &v = snap.pad[k];
+    if (!v.present || !v.online) { memset(v.trail, 0, sizeof(v.trail)); continue; }
+    memmove(&v.trail[1], &v.trail[0], sizeof(v.trail) - sizeof(v.trail[0]));
+    v.trail[0][0] = v.in.lx * 100 / 32768; v.trail[0][1] = v.in.ly * 100 / 32768;
+    v.trail[0][2] = v.in.rx * 100 / 32768; v.trail[0][3] = v.in.ry * 100 / 32768;
+  }
 }
 
-static void drawPairing() {
-  header("PAIR CONTROLLER");
-  uint32_t left = pairing_ms_left() / 1000;
-  if (pairDoneAt) { txt(10, 50, "Paired!", C_GRN, 2); txt(10, 80, "Controller connecting...", C_FG); return; }
-  txt(8, 24, "1. Turn the controller on", C_FG);
-  txt(8, 38, "2. Hold the small PAIR", C_FG);
-  txt(8, 50, "   button (top, by USB-C)", C_FG);
-  txt(8, 62, "   until it blinks FAST", C_FG);
-  txt(8, 80, "3. Keep it close to this", C_FG);
-  txt(8, 92, "   device", C_FG);
-  char b[20]; snprintf(b, sizeof(b), "%lus left", (unsigned long)left); txt(8, 112, b, C_YEL, 2);
-  cv->fillRect(8, 134, UI_W - 16, 6, C_DIM); cv->fillRect(8, 134, (UI_W - 16) * (int)left / 60, 6, C_ACC);
-  footer("click = cancel");
+// ---------------------------------------------------------------- navigation
+// Fast spinning clamps at the ends instead of wrapping, so it never "bounces"; a single slow click wraps.
+static void moveSel(int steps, int count) {
+  if (!steps || count <= 0) return;
+  uint32_t now = millis();
+  bool fast = abs(steps) > 1 || now - lastStepMs < 250;
+  lastStepMs = now;
+  int ns = nav.sel + steps;
+  if (ns < 0) ns = fast ? 0 : count - 1;
+  if (ns >= count) ns = fast ? count - 1 : 0;
+  nav.sel = ns;
 }
 
-// ---------------------------------------------------------------- logic
-static int listLen() {
-  if (screen == S_LIST) return nRows;
-  if (screen == S_PAD) return padSlot >= 0 ? 5 : 2;
-  if (screen == S_SETTINGS) return 4;
-  return 1;
+static int padRows() { int n = 0; for (int i = 0; i < MAX_PADS; i++) if (snap.pad[i].present) n++; return n; }
+static int padIndexOfRow(int row) { int n = 0; for (int i = 0; i < MAX_PADS; i++) if (snap.pad[i].present) { if (n == row) return i; n++; } return -1; }
+
+static void forgetAll() {
+  for (int i = 0; i < MAX_PADS; i++) gip_disconnect(i);
+  pairing_clear();
+  toast("All controllers forgotten");
 }
 
-static void doClick() {
-  if (screen == S_LIST) {
-    Row &r = rows[sel];
-    if (r.kind == 0 || r.kind == 1) { screen = S_PAD; padSlot = r.kind == 0 ? r.slot : -1; padKnown = r.known; sel = 0; }
-    else if (r.kind == 2) { knownAtPairStart = pairing_count(); pairDoneAt = 0; pairing_start(); screen = S_PAIR; }
-    else { screen = S_SETTINGS; sel = 0; }
-  } else if (screen == S_PAD) {
-    if (padSlot >= 0) {
-      switch (sel) {
-        case 0: gip_rumble(padSlot, 70, 70, 0, 0); rumbleSlot = padSlot; rumbleOffAt = millis() + 700; leds_flash(255, 120, 0, 700); say("rumble!"); break;
-        case 1: { uint8_t l = ledLevel[padSlot] ? ledLevel[padSlot] : 20; l = l >= 40 ? 0 : l + 10; if (l == 0 && ledLevel[padSlot] == 0) l = 10; ledLevel[padSlot] = l ? l : 1; gip_led(padSlot, l ? 1 : 0, l); break; }
-        case 2: gip_disconnect(padSlot); screen = S_LIST; sel = 0; say("disconnected"); break;
-        case 3: { const uint8_t *m = gip_pad(padSlot).mac; uint8_t mm[6]; memcpy(mm, m, 6); pairing_remove(mm); gip_disconnect(padSlot); screen = S_LIST; sel = 0; say("forgotten"); break; }
-        default: screen = S_LIST; sel = 0;
+static void settingsClick() {
+  switch (nav.sel) {
+    case 0: cfg.brightness = (cfg.brightness + 1) % 5; setBacklight(cfg.brightness); settings_save(); break;
+    case 1: cfg.ledLevel = (cfg.ledLevel + 1) % 4; leds_set_level(cfg.ledLevel); settings_save(); break;
+    case 2: cfg.accent = (cfg.accent + 1) % 4; theme_set(cfg.accent); settings_save(); break;
+    case 3: { static const uint8_t opts[4] = {0, 5, 15, 30}; int i = 0; for (; i < 4; i++) if (opts[i] == cfg.sleepMin) break; cfg.sleepMin = opts[(i + 1) % 4]; settings_save(); break; }
+    case 4: xinput_set_style(1 - xinput_style()); toast("USB re-plugging..."); break;
+    case 5: cfg.reverseKnob = !cfg.reverseKnob; encoder_set_reverse(cfg.reverseKnob); settings_save(); break;
+    case 6: if (nav.confirm) { forgetAll(); nav.confirm = false; } else { nav.confirm = true; } break;
+    case 7: if (nav.confirm) { toast("Bootloader..."); delay(500); boot_to_download(); } else { nav.confirm = true; } break;
+    case 8: goTo(SC_ABOUT); break;
+  }
+}
+
+static void padAction() {
+  int k = nav.padSlot, ls = (k >= 0 && k < MAX_PADS) ? liveSlot[k] : -1;
+  switch (nav.sel) {
+    case 0: if (ls >= 0) { gip_rumble(ls, 70, 70, 0, 0); rumbleSlot = ls; rumbleOffAt = millis() + 700; toast("Rumble sent"); } break;
+    case 1: if (ls >= 0) { uint8_t l = ledLevelPad[ls] ? ledLevelPad[ls] : 20; l = l >= 40 ? 10 : l + 10; ledLevelPad[ls] = l; gip_led(ls, 1, l); toast("LED changed"); } break;
+    case 2: if (ls >= 0) { gip_disconnect(ls); toast("Disconnected"); goTo(SC_PADS); } break;
+    case 3:
+      if (!nav.confirm) { nav.confirm = true; toast("Click again to forget"); break; }
+      { uint8_t mm[6]; const uint8_t *m = pairing_mac(k); if (m) { memcpy(mm, m, 6); pairing_remove(mm); } if (ls >= 0) gip_disconnect(ls); toast("Forgotten"); goTo(SC_PADS); }
+      break;
+  }
+}
+
+static void handleInput() {
+  int steps = encoder_take();
+  bool click = knob_take_click();
+  bool back = powerbtn_take_back();
+  if (steps || click || back) lastActivity = millis();
+
+  if (back) {
+    switch (nav.screen) {
+      case SC_PAD: goTo(SC_PADS); break;
+      case SC_ABOUT: goTo(SC_SETTINGS, 8); break;
+      case SC_HOME: break;
+      default: { int from = nav.screen; goTo(SC_HOME); nav.sel = from == SC_PADS ? 0 : from == SC_PAIR ? 1 : from == SC_RADIO ? 2 : from == SC_SPECTRUM ? 3 : from == SC_POWER ? 4 : 5; nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; }
+    }
+    return;
+  }
+  switch (nav.screen) {
+    case SC_HOME:
+      moveSel(steps, 6);
+      if (click) { static const Screen tgt[6] = {SC_PADS, SC_PAIR, SC_RADIO, SC_SPECTRUM, SC_POWER, SC_SETTINGS}; goTo(tgt[nav.sel]); }
+      break;
+    case SC_PADS: {
+      int rows = padRows() + 1;
+      moveSel(steps, rows);
+      if (click) {
+        if (nav.sel < rows - 1) { int k = padIndexOfRow(nav.sel); goTo(SC_PAD, 0); nav.padSlot = k; }
+        else goTo(SC_PAIR);
       }
-    } else {
-      if (sel == 0) { const uint8_t *m = pairing_mac(padKnown); if (m) { uint8_t mm[6]; memcpy(mm, m, 6); pairing_remove(mm); } say("forgotten"); }
-      screen = S_LIST; sel = 0;
+      break;
     }
-  } else if (screen == S_SETTINGS) {
-    if (sel == 0) { hid_request_slots(hid_slots() % MAX_PADS + 1); say("restarting..."); leds_flash(170, 0, 255, 900); delay(900); ESP.restart(); }
-    else if (sel == 1) { pairing_clear(); for (int i = 0; i < MAX_PADS; i++) gip_disconnect(i); say("all forgotten"); screen = S_LIST; sel = 0; }
-    else if (sel == 2) { say("bootloader..."); delay(600); boot_to_download(); }
-    else { screen = S_LIST; sel = 0; }
-  } else if (screen == S_PAIR) { pairing_stop(); screen = S_LIST; sel = 0; }
+    case SC_PAD: if (steps) nav.confirm = false; moveSel(steps, 4); if (click) padAction(); break;
+    case SC_PAIR: if (click) { if (pairing_active()) pairing_stop(); else pairing_start(); } break;
+    case SC_POWER: if (click) powerbtn_sleep_now(); break;
+    case SC_SETTINGS: if (steps) nav.confirm = false; moveSel(steps, 9); if (click) settingsClick(); break;
+    default: break;
+  }
 }
 
+static void animate() {
+  nav.selX += ((8 + (nav.sel % 3) * 104) - nav.selX) * 0.4f;
+  nav.selY += ((28 + (nav.sel / 3) * 64) - nav.selY) * 0.4f;
+  float target = 0;
+  if (nav.screen == SC_PADS) { int rows = padRows() + 1; target = nav.sel > 2 ? nav.sel - 2 : 0; if (rows <= 3) target = 0; }
+  if (nav.screen == SC_SETTINGS) target = nav.sel > 4 ? nav.sel - 4 : 0;
+  nav.scrollAnim += (target - nav.scrollAnim) * 0.35f;
+}
+
+// ---------------------------------------------------------------- task
 static void uiTask(void *) {
   esp_task_wdt_add(NULL);
+  uint32_t bootMs = millis();
   for (;;) {
+    uint32_t t0 = millis();
     esp_task_wdt_reset();
-    buildRows();
-    int d; noInterrupts(); d = encDelta; encDelta = 0; interrupts();
-    int n = listLen();
-    if (d && n) { sel = (sel + (d > 0 ? 1 : -1) + n) % n; }
-    if (sel >= n) sel = 0;
-    Btn b = pollButton();
-    if (b == B_CLICK) doClick();
-    if (pairing_active() && screen != S_PAIR) { screen = S_PAIR; pairDoneAt = 0; knownAtPairStart = pairing_count(); }   // knob hold started pairing
-    if (rumbleOffAt && (int32_t)(millis() - rumbleOffAt) >= 0) { rumbleOffAt = 0; gip_rumble(rumbleSlot, 0, 0, 0, 0); }
-    if (screen == S_PAIR) {
-      if (pairing_count() > knownAtPairStart && !pairDoneAt) pairDoneAt = millis();
-      if (pairDoneAt && millis() - pairDoneAt > 3000) { screen = S_LIST; sel = 0; pairDoneAt = 0; }
-      else if (!pairDoneAt && !pairing_active()) { screen = S_LIST; sel = 0; }
-    }
-    if (screen == S_PAD && padSlot >= 0 && gip_pad(padSlot).stage == PAD_FREE) { screen = S_LIST; sel = 0; }
+    if (nav.screen == SC_SPLASH && t0 - bootMs > 1700) goTo(SC_HOME);
 
-    cv->fillScreen(C_BG);
-    switch (screen) {
-      case S_LIST: drawList(); break;
-      case S_PAD: drawPad(); break;
-      case S_SETTINGS: drawSettings(); break;
-      case S_PAIR: drawPairing(); break;
+    if (t0 - lastPower > 1000) { lastPower = t0; power_read(power); }
+    fillSnap();
+    updateTrails();
+    if (nav.screen != SC_SPLASH) handleInput();
+    if (rumbleOffAt && (int32_t)(t0 - rumbleOffAt) >= 0) { rumbleOffAt = 0; gip_rumble(rumbleSlot, 0, 0, 0, 0); }
+    if (snap.nReady > 0) lastActivity = t0;
+    // idle: dim after a minute, sleep after the configured time with no controller
+    if (cfg.sleepMin && t0 - lastActivity > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) powerbtn_sleep_now();
+    setBacklight(t0 - lastActivity > 60000UL && snap.nReady == 0 ? 0 : cfg.brightness);
+    animate();
+
+    if (nav.screen == SC_SPECTRUM) nrf24_scan_slice(9000);
+
+    for (int b = 0; b < 2; b++) {
+      G g{band, b * BAND_H};
+      ui_render(g, snap, nav);
+      tft.drawRGBBitmap(0, b * BAND_H, band->getBuffer(), 320, BAND_H);
     }
-    drawToast();
-    tft.drawRGBBitmap(0, 0, cv->getBuffer(), UI_W, UI_H);
-    vTaskDelay(pdMS_TO_TICKS(40));
+    uint32_t used = millis() - t0;
+    vTaskDelay(pdMS_TO_TICKS(used >= FRAME_MS ? 1 : FRAME_MS - used));
   }
 }
 
@@ -289,19 +257,27 @@ void ui_begin() {
   pinMode(PIN_PWR_EN, OUTPUT); digitalWrite(PIN_PWR_EN, HIGH);
   pinMode(PIN_CC1101_CS, OUTPUT); digitalWrite(PIN_CC1101_CS, HIGH);
   pinMode(PIN_SD_CS, OUTPUT); digitalWrite(PIN_SD_CS, HIGH);
-  ledcSetup(0, 20000, 8); ledcAttachPin(PIN_LCD_BL, 0); ledcWrite(0, 90);   // dimmed backlight (~35%) to save power
-  pinMode(PIN_ENC_A, INPUT_PULLUP); pinMode(PIN_ENC_B, INPUT_PULLUP); pinMode(PIN_ENC_KEY, INPUT_PULLUP);
-  attachInterrupt(PIN_ENC_A, encIsr, FALLING);
+  ledcSetup(0, 20000, 8); ledcAttachPin(PIN_LCD_BL, 0);
+  settings_begin();
+  theme_set(cfg.accent);
+  setBacklight(cfg.brightness);
+  encoder_begin();
+  encoder_set_reverse(cfg.reverseKnob);
+  leds_set_level(cfg.ledLevel);
   delay(30);
   SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, -1);
   tft.init(170, 320);
   tft.setSPISpeed(40000000);
   tft.setRotation(1);
-  tft.fillScreen(C_BG);
-  cv = new GFXcanvas16(UI_W, UI_H);
-  xTaskCreatePinnedToCore(uiTask, "ui", 6144, nullptr, 1, nullptr, 1);
+  tft.fillScreen(0);
+  nrf24_begin();
+  band = new GFXcanvas16(320, BAND_H);
+  esp_read_mac(snap.mac, ESP_MAC_WIFI_STA);
+  lastActivity = millis();
+  goTo(SC_SPLASH);
+  // low priority on core 0 (alongside Wi-Fi): drawing can never delay the protocol loop on core 1
+  xTaskCreatePinnedToCore(uiTask, "ui", 8192, nullptr, 1, nullptr, 0);
 }
 
-void ui_notify_pairing_done() {}
-
 void ui_off() { ledcWrite(0, 0); }
+#endif

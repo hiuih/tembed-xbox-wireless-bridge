@@ -31,7 +31,7 @@ drivers (GPL). This project is not affiliated with Microsoft.
 | Click | Open / activate the selected item |
 | **Hold 10 seconds** | Reboot into the **bootloader** (the LED ring fills red as a warning) |
 
-**Power off (T-Embed):** hold the separate **user key (GPIO6, the other button, not the knob) for 5 seconds**. The ring fills orange as a countdown. On battery alone this is a real shutdown (wake with the PWR button). On USB power the charger chip cannot cut power, so it goes to deep sleep instead: screen, LEDs and radio off, and it drops off the computer's USB. Press the same key to wake it.
+**Sleep (T-Embed):** hold the separate **user key (GPIO6, the other button, not the knob) for 5 seconds**. The ring fills orange as a countdown, then the board goes to deep sleep (screen, LEDs and radio off; it drops off the computer's USB). Press the same key to wake it. An earlier version cut the battery with the charger chip; it could then only be woken by unplugging the battery, so that was removed.
 
 ## The LED ring (the main status display)
 
@@ -207,6 +207,30 @@ vendor frames, `w` cycle TX power, `m` toggle RX filter, `e` toggle radio tweaks
   It costs about 1 ms of airtime per burst.
 - About 17-25% of GIP sequence numbers are never seen. TX power, receive filter, channel (1/6/11), receive buffers
   and driver beacon settings did not change that.
+
+## T-Embed app (`tembed_xinput`): screen, knob and automatic Xbox pads
+
+Built for the T-Embed CC1101 (Plus) as an app-only image for the **Launcher** firmware: copy `firmware.bin` to the SD card
+(for example `downloads/XboxBridge.XInput.0.2.bin`) and install it from Launcher's SD menu. Do **not** flash it over USB
+with an upload: that writes at the start of flash and would erase Launcher and the other installed firmware.
+
+**Controls:** turn the knob to move, click to select, **top key short press = back**, **hold the knob 1 s = pairing**,
+hold the top key 5 s = deep sleep (press it again to wake). The battery is never disconnected.
+
+**Screens:** Home (6 tiles), Controllers (live list), Controller (sticks with trails, triggers, buttons, rumble/LED/drop/forget),
+Pair (radar + countdown), Radio (channel, frame and event rates, queue drops, loop time, memory, 60 s graphs),
+Spectrum (2.4 GHz occupancy from the nRF24, with Wi-Fi channels 1/6/11 marked), Power (battery, voltage graph, sleep now),
+Settings (brightness, LED ring, accent colour, auto-sleep, USB style, knob direction, forget all, bootloader), About.
+
+**Automatic Xbox pads:** the number of Xbox controllers shown to the PC follows the number actually connected (1 to 4). It grows
+1.5 s after another controller becomes ready and shrinks only after the extra ones have been gone for 30 s. The change is a soft
+USB unplug/replug (about a second), not a restart. *Settings > USB style* switches between the two descriptor styles (A/B).
+Whether Windows accepts more than one Xbox interface in a single USB device is **not confirmed**.
+
+**The nRF24 cannot carry Xbox controller traffic** (it is a different kind of radio). It is used only as the spectrum scanner.
+
+**Screen simulator:** `tools/sim/build_and_render.sh` renders every screen to PNG on the Mac using the real drawing code
+(`src/ui_screens*.cpp`, fake data), so layouts can be reviewed without hardware.
 
 ## Waking the computer
 

@@ -8,3 +8,7 @@ bool power_report(char *buf, size_t n);
 
 bool power_vbus_present();      // true if USB (or another input) is powering the board
 void power_ship_mode();         // cut the battery path (only really powers off when no USB is connected)
+
+struct PowerInfo { float vbat, vsys, vbus; int chgmA; bool vbusPresent, charging; int pct; };
+bool power_read(PowerInfo &out);        // false if the charger chip does not answer
+int power_percent(float vbat);          // rough LiPo estimate from the voltage

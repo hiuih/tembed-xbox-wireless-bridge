@@ -27,16 +27,13 @@ void powerbtn_begin() {
 float power_hold_progress() { return downAt ? (float)(millis() - downAt) / PWRKEY_HOLD_MS : 0.0f; }
 
 static void powerOff() {
-  bool usb = power_vbus_present();
-  USBSerial.printf("power off: %s\n", usb ? "USB present -> deep sleep (press the key again to wake)" : "battery only -> full shutdown (wake with PWR)");
+  USBSerial.println("deep sleep (press the top key to wake)");
   USBSerial.flush();
   leds_off();
   ui_off();
   esp_wifi_stop();
   while (digitalRead(PWRKEY_PIN) == LOW) delay(10);   // wait for release, or the wake-on-low would fire at once
   delay(150);
-
-  if (!usb) power_ship_mode();                         // battery alone: this cuts power; execution stops here
 
   // Park the pins low and keep them there through deep sleep.
   pinMode(PIN_LCD_BL, OUTPUT); digitalWrite(PIN_LCD_BL, LOW);
@@ -50,12 +47,20 @@ static void powerOff() {
   esp_deep_sleep_start();
 }
 
+static volatile bool backFlag = false;
+bool powerbtn_take_back() { bool b = backFlag; backFlag = false; return b; }
+void powerbtn_sleep_now() { powerOff(); }
+
 void powerbtn_tick() {
   bool down = digitalRead(PWRKEY_PIN) == LOW;
   uint32_t now = millis();
   if (down != lastDown) {
     static uint32_t edge = 0;
-    if (now - edge > 30) { edge = now; lastDown = down; USBSerial.printf("top key (GPIO%d): %s\n", PWRKEY_PIN, down ? "DOWN" : "up"); downAt = down ? now : 0; }
+    if (now - edge > 30) {
+      edge = now; lastDown = down;
+      if (!down && downAt && now - downAt < 900) backFlag = true;   // short press = back
+      downAt = down ? now : 0;
+    }
   }
   if (downAt && now - downAt >= PWRKEY_HOLD_MS) powerOff();
 }

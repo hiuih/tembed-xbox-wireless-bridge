@@ -25,6 +25,9 @@ uint32_t hid_reports_sent();
 uint32_t hid_rumble_msgs();
 #ifdef XINPUT_MODE
 void xinput_dump(char *buf, size_t n);
-int xinput_mode();                        // 0 = 1 pad, 1 = 2 pads (wired style), 2 = 2 pads (receiver style)
-void xinput_cycle_mode();                 // next layout, then restart   // debug: what each XInput interface is being fed
+   // debug: what each XInput interface is being fed
 #endif
+
+// XInput descriptor style (0 = A real pad, 1 = B receiver style); a no-op in the plain HID builds.
+int xinput_style();
+void xinput_set_style(int st);            // changes style; the USB device re-enumerates, no restart

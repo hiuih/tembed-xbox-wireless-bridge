@@ -15,8 +15,11 @@
 #include "powerbtn.h"
 #endif
 #include "esp_task_wdt.h"
+#include "stats.h"
 
+#ifndef XINPUT_MODE
 static uint32_t restartAt = 0;
+#endif
 
 static void onPad(int slot, PadEvent ev) {
   const Pad &p = gip_pad(slot);
@@ -28,6 +31,7 @@ static void onPad(int slot, PadEvent ev) {
   if (ev == PADEV_GUIDE_DOWN || ev == PADEV_READY) {
     if (hid_wake_host()) { leds_flash(140, 140, 140, 600); USBSerial.println("USB remote wakeup sent"); }
   }
+#ifndef XINPUT_MODE
   // More controllers than USB gamepads exposed: expose more (needs a USB re-enumeration = restart).
   if (ev == PADEV_READY && slot >= hid_slots() && hid_slots() < hid_max_slots() && !restartAt) {
     if (slot + 1 > pairing_count()) hid_request_slots(slot + 1);   // normally the paired count already covers it
@@ -35,6 +39,7 @@ static void onPad(int slot, PadEvent ev) {
     leds_flash(170, 0, 255, 2500);
     USBSerial.println("new controller needs more USB gamepads: restarting to expose them");
   }
+#endif
 }
 
 void gipLogRx(int i, uint8_t cmd, uint8_t opt, uint8_t seq, uint32_t plen, uint32_t coff) {
@@ -103,9 +108,10 @@ static uint32_t rumbleOff = 0;
 
 void loop() {
   esp_task_wdt_reset();
+  stats_loop_begin();
   boot_mark(1);
   RadioEvent ev;
-  for (int n = 0; n < 24 && radio_poll(ev); n++) gip_handle(ev);
+  for (int n = 0; n < 32 && radio_poll(ev); n++) { gip_handle(ev); stats_event(); }
   boot_mark(2); gip_tick();
   boot_mark(3); pairing_tick();
   radio_set_pairing(pairing_beacon_flag());
@@ -114,13 +120,16 @@ void loop() {
   boot_mark(6);
   if (rumbleOff && (int32_t)(millis() - rumbleOff) >= 0) { rumbleOff = 0; for (int i = 0; i < MAX_PADS; i++) gip_rumble(i, 0, 0, 0, 0); USBSerial.println("rumble off"); }
   bootguard_tick();
+#ifndef XINPUT_MODE
   if (restartAt && (int32_t)(millis() - restartAt) >= 0) ESP.restart();
+#endif
   boot_mark(7); knob_tick();
 #if HAS_PMIC
   powerbtn_tick();
 #endif
   boot_mark(8); leds_tick();
   boot_mark(9);
+  stats_tick();
 
   while (USBSerial.available()) {
     char c = USBSerial.read();
@@ -131,8 +140,12 @@ void loop() {
     else if (c == 's') status();
     else if (c == 'w') { int q = radio_tx_power() >= 78 ? 44 : radio_tx_power() + 17; radio_set_tx_power(q); USBSerial.printf("tx power set to %d (x0.25 dBm) = %.1f dBm\n", radio_tx_power(), radio_tx_power() / 4.0f); }
     else if (c == 'x') { static char cb[1800]; radio_census(0, cb, sizeof(cb)); USBSerial.printf("CENSUS (controller in slot 0)\n    %s", cb); }
+#ifdef RADIO_DEBUG
     else if (c == 'k') { int f = radio_forced_channel(); f = f == 0 ? 1 : f == 1 ? 6 : f == 6 ? 11 : 0; radio_force_channel(f); USBSerial.printf("channel %s\n", f ? String(f).c_str() : "AUTO (scan)"); }
+#endif
+#ifdef RADIO_DEBUG
     else if (c == 'e') { radio_tweak(!radio_tweaked()); USBSerial.printf("radio tweaks %s\n", radio_tweaked() ? "ON" : "off"); }
+#endif
     else if (c == 'z') { static char vb[3600]; radio_trace_vendor(vb, sizeof(vb)); USBSerial.printf("VENDOR FRAMES (type0/sub7), newest last\n%s", vb); }
 #ifdef XINPUT_MODE
     else if (c == 'r') { static char rb[700]; xinput_dump(rb, sizeof(rb)); USBSerial.print(rb); }
@@ -147,5 +160,6 @@ void loop() {
   }
   static uint32_t lastStat = 0;
   if (millis() - lastStat > 10000) { lastStat = millis(); status(); }
+  stats_loop_end();
   delay(1);
 }

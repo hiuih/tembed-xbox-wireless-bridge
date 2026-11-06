@@ -41,6 +41,7 @@ int radio_forced_channel();
 void radio_tweak(bool on);                              // experimental AP tweaks (rare driver beacons, 11g only)
 bool radio_tweaked();
 void radio_trace_vendor(char *buf, size_t n);          // last vendor (type0/sub7) frames from the controller: timing, seq, retry flag
+uint32_t radio_queue_max();                              // event-queue high-water mark since the last call
 void radio_set_filter(int mode);                        // 0 = everything, 1 = management+data only
 int radio_filter();
 

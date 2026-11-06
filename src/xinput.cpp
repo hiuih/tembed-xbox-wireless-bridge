@@ -1,11 +1,19 @@
-// XInput (Xbox 360 wired controller) USB device for Windows.
+// XInput (Xbox 360 wired controller) USB device for Windows, with an automatic number of controllers.
 //
 // Windows treats a device as a real Xbox controller (XInput: games show Xbox glyphs and use the Xbox mapping)
 // when it exposes the Xbox 360 vendor interface: class 0xFF, subclass 0x5D, protocol 0x01, with one interrupt IN
 // and one interrupt OUT endpoint. This implements that on top of TinyUSB's application class driver hook.
-// XInput must be the ONLY USB function, so there is no USB serial here: logs go to the UART port instead.
+// XInput must be the ONLY USB function, so there is no USB serial here.
 //
-// One interface = one controller (XInput player slot). Several controllers = several such interfaces in one device.
+// One interface = one controller (XInput player slot). The number of interfaces follows the number of connected
+// controllers: it grows shortly after a controller connects and shrinks only after the extra ones have been gone
+// for a while. A change is applied by a soft USB disconnect/reconnect (the PC sees the device re-plugged, about
+// one second), never by restarting the firmware. The descriptors are therefore produced on demand
+// (tud_descriptor_*_cb are overridden), and the serial number changes with the layout so Windows treats each
+// layout as a fresh device instead of reusing cached descriptors.
+//
+// Descriptor style A = class descriptor of a real wired pad (0x21); style B = the receiver-style 0x22 descriptor used
+// by the multi-controller emulation in github.com/Berghopper/360-w-raw-gadget (MIT).
 #include "config.h"
 #ifdef XINPUT_MODE
 #include "hid.h"
@@ -19,21 +27,11 @@ extern "C" {
 #include "esp32-hal-tinyusb.h"
 }
 
-// One interface = one XInput controller. A real Xbox 360 pad is a single interface, which is the proven case for
-// Windows' driver; more than one is experimental (build env s3_xinput2).
-#ifndef XINPUT_INTERFACES
-#define XINPUT_INTERFACES 1
-#endif
-// Layouts (selected at runtime, stored in flash, cycled by holding BOOT for 4 s):
-//   mode 0: ONE Xbox controller interface, real-pad class descriptor  (known to work on Windows)
-//   mode 1: TWO interfaces, real-pad class descriptor                  (experimental)
-//   mode 2: TWO interfaces, receiver-style class descriptor            (experimental; layout from the multi-controller
-//           emulation in github.com/Berghopper/360-w-raw-gadget, MIT)
-#define XI_MAX_IF 2
+#define XI_MAX_IF 4
+#define XI_IF_MAX_LEN (9 + 20 + 14)
 
-static int nSlots = 1;
-static int mode = 0;
-static int unkLen = 17;
+static int nIf = 1;                 // interfaces currently exposed
+static int style = 0;               // 0 = A, 1 = B
 static uint8_t epIn[XI_MAX_IF], epOut[XI_MAX_IF];
 static bool opened[XI_MAX_IF];
 static uint8_t outBuf[XI_MAX_IF][32];
@@ -44,28 +42,18 @@ static uint32_t lastSent[XI_MAX_IF];
 static volatile uint32_t sent = 0, rumbleMsgs = 0;
 static volatile int8_t ifToSlot[XI_MAX_IF];   // XInput interface k carries controller slot ifToSlot[k] (-1 = none)
 
-// Like a real console: the controller that connected first is player 1 (interface 0), the next is player 2, ...
-static void remap() {
-  int8_t order[MAX_PADS]; int n = 0;
-  for (int i = 0; i < MAX_PADS; i++) if (gip_pad(i).stage == PAD_READY) order[n++] = i;
-  for (int a = 1; a < n; a++) {            // insertion sort by connect time
-    int8_t v = order[a]; int b = a - 1;
-    while (b >= 0 && gip_pad(order[b]).connectedAt > gip_pad(v).connectedAt) { order[b + 1] = order[b]; b--; }
-    order[b + 1] = v;
-  }
-  for (int k = 0; k < XI_MAX_IF; k++) ifToSlot[k] = k < n ? order[k] : -1;
-}
+// ---------------------------------------------------------------- descriptors (built on demand)
+static uint8_t cfgDesc[9 + XI_MAX_IF * XI_IF_MAX_LEN];
+static uint16_t cfgLen = 0;
+static uint16_t serialStr[16];
 
-// ---------------------------------------------------------------- descriptors
-static uint16_t xinputDescriptors(uint8_t *dst, uint8_t *itf) {
-  uint8_t *p = dst;
-  for (int i = 0; i < nSlots; i++) {
-    uint8_t ep = tinyusb_get_free_duplex_endpoint();      // same endpoint number for IN and OUT, like a real pad
-    uint8_t in = 0x80 | ep, out = ep;
-    uint8_t n = (*itf)++;
-    const uint8_t ifd[9] = {9, TUSB_DESC_INTERFACE, n, 0, 2, 0xFF, 0x5D, 0x01, 0};
+static void buildConfig() {
+  uint8_t *p = cfgDesc + 9;
+  for (int i = 0; i < nIf; i++) {
+    uint8_t in = 0x81 + i, out = 0x01 + i;     // endpoint number = interface + 1, IN and OUT share it like a real pad
+    const uint8_t ifd[9] = {9, TUSB_DESC_INTERFACE, (uint8_t)i, 0, 2, 0xFF, 0x5D, 0x01, 0};
     memcpy(p, ifd, 9); p += 9;
-    if (mode == 2) {
+    if (style == 1) {
       const uint8_t unk[20] = {0x14, 0x22, 0x00, 0x01, 0x13, in, 0x1d, 0x00, 0x17, 0x01, 0x02, 0x08, 0x13, out, 0x0c, 0x00, 0x0c, 0x01, 0x02, 0x08};
       memcpy(p, unk, sizeof(unk)); p += sizeof(unk);
     } else {
@@ -77,8 +65,47 @@ static uint16_t xinputDescriptors(uint8_t *dst, uint8_t *itf) {
     const uint8_t epo[7] = {7, TUSB_DESC_ENDPOINT, out, TUSB_XFER_INTERRUPT, 0x20, 0x00, 8};
     memcpy(p, epo, 7); p += 7;
   }
-  return p - dst;
+  cfgLen = p - cfgDesc;
+  // configuration header: bus powered, remote wakeup, 500 mA (like a real wired 360 pad)
+  const uint8_t hdr[9] = {9, TUSB_DESC_CONFIGURATION, (uint8_t)(cfgLen & 0xff), (uint8_t)(cfgLen >> 8), (uint8_t)nIf, 1, 0, 0xA0, 250};
+  memcpy(cfgDesc, hdr, 9);
+  // serial number encodes the layout: a different (count, style) is a different device to Windows
+  char sn[16];
+  snprintf(sn, sizeof(sn), "XB36%d%c", nIf, 'A' + style);
+  int n = strlen(sn);
+  serialStr[0] = (TUSB_DESC_STRING << 8) | (2 * n + 2);
+  for (int i = 0; i < n; i++) serialStr[1 + i] = sn[i];
 }
+
+extern "C" uint8_t const *tud_descriptor_configuration_cb(uint8_t) { return cfgDesc; }
+
+extern "C" uint8_t const *tud_descriptor_device_cb(void) {
+  static const tusb_desc_device_t dev = {
+      .bLength = sizeof(tusb_desc_device_t), .bDescriptorType = TUSB_DESC_DEVICE, .bcdUSB = 0x0200,
+      .bDeviceClass = 0xFF, .bDeviceSubClass = 0xFF, .bDeviceProtocol = 0xFF, .bMaxPacketSize0 = 64,
+      .idVendor = 0x045E, .idProduct = 0x028E, .bcdDevice = 0x0114,
+      .iManufacturer = 1, .iProduct = 2, .iSerialNumber = 3, .bNumConfigurations = 1};
+  return (uint8_t const *)&dev;
+}
+
+extern "C" uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t) {
+  static uint16_t buf[24];
+  const char *s = nullptr;
+  switch (index) {
+    case 0: buf[0] = (TUSB_DESC_STRING << 8) | 4; buf[1] = 0x0409; return buf;
+    case 1: s = "Microsoft"; break;
+    case 2: s = "Controller"; break;
+    case 3: return serialStr;
+    default: return nullptr;
+  }
+  int n = strlen(s);
+  buf[0] = (TUSB_DESC_STRING << 8) | (2 * n + 2);
+  for (int i = 0; i < n; i++) buf[1 + i] = s[i];
+  return buf;
+}
+
+// minimal interface so USB.begin() has something to start with; the real descriptors are the overrides above
+static uint16_t dummyDescriptors(uint8_t *dst, uint8_t *itf) { (*itf)++; buildConfig(); memcpy(dst, cfgDesc + 9, cfgLen - 9); return cfgLen - 9; }
 
 // ---------------------------------------------------------------- class driver
 static void drvInit(void) {}
@@ -131,7 +158,19 @@ extern "C" usbd_class_driver_t const *usbd_app_driver_get_cb(uint8_t *driver_cou
   return &xinputDriver;
 }
 
-// ---------------------------------------------------------------- reports
+// ---------------------------------------------------------------- controller -> interface mapping and reports
+// Like a real console: the controller that connected first is player 1 (interface 0), the next is player 2, ...
+static void remap() {
+  int8_t order[MAX_PADS]; int n = 0;
+  for (int i = 0; i < MAX_PADS; i++) if (gip_pad(i).stage == PAD_READY) order[n++] = i;
+  for (int a = 1; a < n; a++) {            // insertion sort by connect time
+    int8_t v = order[a]; int b = a - 1;
+    while (b >= 0 && gip_pad(order[b]).connectedAt > gip_pad(v).connectedAt) { order[b + 1] = order[b]; b--; }
+    order[b + 1] = v;
+  }
+  for (int k = 0; k < XI_MAX_IF; k++) ifToSlot[k] = k < n ? order[k] : -1;
+}
+
 static void build(uint8_t *r, const Pad &p) {
   memset(r, 0, 20);
   r[1] = 0x14;
@@ -162,43 +201,81 @@ static void build(uint8_t *r, const Pad &p) {
   for (int i = 0; i < 4; i++) { r[6 + 2 * i] = v[i] & 0xff; r[7 + 2 * i] = (v[i] >> 8) & 0xff; }
 }
 
+// ---------------------------------------------------------------- automatic layout
+enum { RE_IDLE, RE_DROPPED };
+static int reState = RE_IDLE;
+static uint32_t reAt = 0;
+static int wantVal = 1;
+static uint32_t wantSince = 0;
+
+static int pendCount = 1, pendStyle = 0;
+static volatile int styleRequest = -1;   // set from the UI task, consumed by hid_task() on the USB side
+
+// Step 1: unplug. The descriptors are only rebuilt after the pause, so the host can never read half-new data.
+static void applyLayout(int newCount, int newStyle) {
+  pendCount = newCount;
+  pendStyle = newStyle;
+  for (int i = 0; i < XI_MAX_IF; i++) { opened[i] = false; lastValid[i] = false; }
+  tud_disconnect();                      // the host sees the device unplugged ...
+  reState = RE_DROPPED;
+  reAt = millis();                       // ... and hid_task() plugs it back in after a short pause
+}
+
 void hid_begin() {
-  Serial.begin(115200);
+  // GPIO43/44 are the UART pins; on the T-Embed Plus they are the nRF24 CE/CSN lines, so no UART there.
+  if (!HAS_SCREEN) Serial.begin(115200);
   Preferences pr;
   pr.begin("xbhid", true);
-  mode = pr.getUChar("ximode", 0);
+  style = pr.getUChar("xistyle", 0) & 1;
   pr.end();
-  if (mode < 0 || mode > 2) mode = 0;
-  nSlots = mode == 0 ? 1 : XI_MAX_IF;
-  unkLen = mode == 2 ? 20 : 17;
-  tinyusb_enable_interface(USB_INTERFACE_CUSTOM, nSlots * (9 + unkLen + 14), xinputDescriptors);
+  nIf = 1;
+  buildConfig();
+  tinyusb_enable_interface(USB_INTERFACE_CUSTOM, cfgLen - 9, dummyDescriptors);
   USB.VID(0x045E);
   USB.PID(0x028E);
   USB.usbClass(0xFF);
   USB.usbSubClass(0xFF);
   USB.usbProtocol(0xFF);
   USB.usbVersion(0x0200);
-  USB.firmwareVersion(0x0114);
   USB.productName("Controller");
   USB.manufacturerName("Microsoft");
-  USB.usbAttributes(TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP);   // 0xA0, like a real wired 360 pad (bus powered, 500 mA)
+  USB.serialNumber("XB36");
+  USB.usbAttributes(TUSB_DESC_CONFIG_ATT_REMOTE_WAKEUP);
   USB.begin();
 }
 
-int xinput_mode() { return mode; }
-void xinput_cycle_mode() {
+int xinput_style() { return style; }
+void xinput_set_style(int st) {
+  st &= 1;
   Preferences pr;
   pr.begin("xbhid", false);
-  pr.putUChar("ximode", (mode + 1) % 3);
+  pr.putUChar("xistyle", st);
   pr.end();
-  ESP.restart();
+  if (st != style) styleRequest = st;    // applied by hid_task()
 }
 
 void hid_task() {
-  if (!tud_mounted()) return;
   uint32_t now = millis();
+  if (reState == RE_DROPPED) {
+    if (now - reAt > 900) {
+      nIf = pendCount; style = pendStyle; buildConfig();   // step 2: new descriptors while the device is unplugged
+      tud_connect();                                         // step 3: plug back in
+      reState = RE_IDLE; wantSince = now;
+    }
+    return;
+  }
+  if (styleRequest >= 0) { int st = styleRequest; styleRequest = -1; if (st != style) { applyLayout(nIf, st); return; } }
+  if (!tud_mounted()) return;
+
   remap();
-  for (int i = 0; i < nSlots; i++) {
+  int ready = 0;
+  for (int i = 0; i < MAX_PADS; i++) if (gip_pad(i).stage == PAD_READY) ready++;
+  int want = ready < 1 ? 1 : ready > XI_MAX_IF ? XI_MAX_IF : ready;
+  if (want != wantVal) { wantVal = want; wantSince = now; }
+  if (want > nIf && now - wantSince > 1500) { applyLayout(want, style); return; }          // grow quickly
+  if (want < nIf && now - wantSince > 30000) { applyLayout(want, style); return; }         // shrink only after a long absence
+
+  for (int i = 0; i < nIf; i++) {
     if (!opened[i]) continue;
     uint8_t *r = inBuf[i];
     uint8_t cur[20];
@@ -216,8 +293,8 @@ void hid_task() {
 void xinput_dump(char *buf, size_t n) {
   remap();
   size_t o = 0;
-  o += snprintf(buf + o, n - o, "XInput mode %d (%s): usb mounted=%d, %d interface(s), reports sent %lu\n", mode, mode == 0 ? "1 pad" : mode == 1 ? "2 pads, wired-style" : "2 pads, receiver-style", tud_mounted(), nSlots, (unsigned long)sent);
-  for (int k = 0; k < nSlots && o < n - 120; k++) {
+  o += snprintf(buf + o, n - o, "XInput style %c: usb mounted=%d, %d interface(s), reports sent %lu\n", 'A' + style, tud_mounted(), nIf, (unsigned long)sent);
+  for (int k = 0; k < nIf && o < n - 120; k++) {
     uint8_t r[20];
     if (ifToSlot[k] >= 0) build(r, gip_pad(ifToSlot[k])); else { memset(r, 0, 20); r[1] = 0x14; }
     o += snprintf(buf + o, n - o, "  interface %d <- controller slot %d: ", k, ifToSlot[k]);
@@ -227,16 +304,9 @@ void xinput_dump(char *buf, size_t n) {
   }
 }
 
-int hid_slots() { return nSlots; }
-int hid_max_slots() { return nSlots; }   // XInput: the layout is chosen with the BOOT button, never auto-grown (that caused a restart loop)
-void hid_request_slots(int n) {
-  if (n < 1) n = 1;
-  if (n > XI_MAX_IF) n = XI_MAX_IF;
-  Preferences pr;
-  pr.begin("xbhid", false);
-  pr.putUChar("slots", n);
-  pr.end();
-}
+int hid_slots() { return nIf; }
+int hid_max_slots() { return XI_MAX_IF; }
+void hid_request_slots(int) {}           // automatic: nothing to request
 bool hid_mounted() { return tud_mounted(); }
 bool hid_suspended() { return tud_suspended(); }
 bool hid_wake_host() { return tud_suspended() ? tud_remote_wakeup() : false; }

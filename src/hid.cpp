@@ -152,4 +152,6 @@ bool hid_suspended() { return tud_suspended(); }
 bool hid_wake_host() { return tud_suspended() ? tud_remote_wakeup() : false; }
 uint32_t hid_reports_sent() { return sent; }
 uint32_t hid_rumble_msgs() { return rumbleMsgs; }
+int xinput_style() { return 0; }
+void xinput_set_style(int) {}
 #endif

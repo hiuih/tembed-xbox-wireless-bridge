@@ -52,5 +52,7 @@ static const uint8_t SCAN_CHANNELS[] = {1, 6, 11};
 #define PIN_SD_CS 13
 
 // The visible part of the (partly damaged) display is the left side: lay the UI out in this width.
-#define UI_W 176
+#ifndef UI_W
+#define UI_W 176   // damaged-screen layout; a healthy display uses -DUI_W=320
+#endif
 #define UI_H 170

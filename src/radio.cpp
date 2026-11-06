@@ -14,6 +14,7 @@ extern "C" int ieee80211_raw_frame_sanity_check(int32_t a, int32_t b, int32_t c)
 extern "C" esp_err_t esp_wifi_internal_set_fix_rate(wifi_interface_t ifx, bool en, wifi_phy_rate_t rate);
 
 static QueueHandle_t evq;
+static volatile uint32_t qMax = 0;
 static RadioStats stats;
 static volatile uint8_t curCh = 1;
 static volatile bool pairFlag = false;
@@ -32,6 +33,7 @@ static volatile uint32_t lostFrames[MAX_PADS], rxFramesPad[MAX_PADS];
 static volatile uint16_t sq[MAX_PADS][3];
 static volatile uint32_t sqFrames[MAX_PADS][3], sqLost[MAX_PADS][3];
 static int txPower = 44, filterMode = 0, forcedCh = 0;
+#ifdef RADIO_DEBUG
 // census of every frame transmitted by registered controller slot 0, BEFORE the 'addressed to us' filter:
 // [type][subtype][RA class 0=us 1=broadcast/multicast 2=someone else]  and a combined all-frames sequence check
 static volatile uint32_t census[4][16][3];
@@ -44,6 +46,8 @@ static volatile uint32_t rateCnt[2][32];    // [data/null][PHY rate code]
 static volatile uint32_t sigMode[2][3];     // 0 legacy, 1 HT, 2 VHT
 static volatile uint32_t cwbCnt[2][2];      // 20 MHz / 40 MHz
 static volatile uint32_t shortGi[2][2];
+#endif
+
 
 static int findSlot(const uint8_t *mac) {
   for (int i = 0; i < MAX_PADS; i++)
@@ -62,6 +66,7 @@ static void push(RadioEventKind k, const uint8_t *mac, int8_t rssi, const uint8_
   ev.len = len;
   if (len) memcpy(ev.data, data, len);
   if (xQueueSend(evq, &ev, 0) != pdTRUE) stats.queueDrops++;
+  else { uint32_t w = uxQueueMessagesWaiting(evq); if (w > qMax) qMax = w; }
 }
 
 static void rxCb(void *buf, wifi_promiscuous_pkt_type_t) {
@@ -70,6 +75,7 @@ static void rxCb(void *buf, wifi_promiscuous_pkt_type_t) {
   int len = p->rx_ctrl.sig_len;
   stats.rxFrames++;
   if (len < 24 + 4) return;
+#ifdef RADIO_DEBUG
   {   // census (slot 0 only)
     const uint8_t *tx = d + 10;
     if (regUsed[0] && !memcmp(tx, regMac[0], 6)) {
@@ -97,6 +103,7 @@ static void rxCb(void *buf, wifi_promiscuous_pkt_type_t) {
       }
     }
   }
+#endif
   if (memcmp(d + 4, DONGLE_MAC, 6) != 0) return;  // only frames addressed to our BSSID
   stats.toMe++;
   uint8_t type = (d[0] >> 2) & 3, sub = (d[0] >> 4) & 15;
@@ -200,7 +207,7 @@ static void setChannel(uint8_t ch) {
 }
 
 void radio_begin() {
-  evq = xQueueCreate(32, sizeof(RadioEvent));
+  evq = xQueueCreate(64, sizeof(RadioEvent));
   WiFi.mode(WIFI_STA);
   esp_wifi_stop();
   esp_wifi_deinit();
@@ -228,6 +235,7 @@ void radio_begin() {
   wifi_promiscuous_filter_t flt = {.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL};
   esp_wifi_set_promiscuous_filter(&flt);
   esp_wifi_set_promiscuous(true);
+  radio_set_filter(1);                      // management + data only: far fewer callbacks on a busy band
   esp_wifi_internal_set_fix_rate(WIFI_IF_AP, true, WIFI_PHY_RATE_6M);
   setChannel(SCAN_CHANNELS[0]);
 }
@@ -248,6 +256,7 @@ void radio_tick() {
   if (now - lastBeacon >= 100) { lastBeacon = now; sendBeacon(); }
 }
 
+uint32_t radio_queue_max() { uint32_t m = qMax; qMax = 0; return m; }
 bool radio_poll(RadioEvent &ev) { return xQueueReceive(evq, &ev, 0) == pdTRUE; }
 
 void radio_register(int slot, const uint8_t *mac) {
@@ -268,6 +277,7 @@ void radio_seq_report(int slot, char *buf, size_t n) {
   snprintf(buf, n, "seq[data %lu/%lu null %lu/%lu all %lu/%lu](lost/seen)", (unsigned long)sqLost[slot][0], (unsigned long)sqFrames[slot][0],
            (unsigned long)sqLost[slot][1], (unsigned long)sqFrames[slot][1], (unsigned long)sqLost[slot][2], (unsigned long)sqFrames[slot][2]);
 }
+#ifdef RADIO_DEBUG
 void radio_census(int slot, char *buf, size_t n) {
   (void)slot;
   size_t o = snprintf(buf, n, "all-frames seq: lost %lu / seen %lu (retries %lu)\n", (unsigned long)anyLost, (unsigned long)anyFrames, (unsigned long)anyRetry);
@@ -305,6 +315,10 @@ void radio_trace_vendor(char *buf, size_t n) {
     prev = t.us;
   }
 }
+#else
+void radio_census(int, char *buf, size_t) { buf[0] = 0; }
+void radio_trace_vendor(char *buf, size_t) { buf[0] = 0; }
+#endif
 void radio_set_tx_power(int q) { if (q < 8) q = 8; if (q > 84) q = 84; txPower = q; esp_wifi_set_max_tx_power(q); }
 int radio_tx_power() { return txPower; }
 void radio_set_filter(int mode) {

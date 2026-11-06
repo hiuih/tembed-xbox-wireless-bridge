@@ -49,3 +49,26 @@ void power_ship_mode() {
   uint8_t r09;
   if (rd(0x09, r09)) wr(0x09, (r09 | 0x20) & ~0x08);   // BATFET_DIS=1, BATFET_DLY=0 (turn off immediately)
 }
+
+int power_percent(float v) {
+  static const float tv[9] = {3.30f, 3.50f, 3.62f, 3.70f, 3.78f, 3.86f, 3.95f, 4.05f, 4.15f};
+  static const int tp[9] = {0, 5, 15, 30, 50, 65, 80, 92, 100};
+  if (v <= tv[0]) return 0;
+  for (int i = 1; i < 9; i++)
+    if (v <= tv[i]) return tp[i - 1] + (int)((tp[i] - tp[i - 1]) * (v - tv[i - 1]) / (tv[i] - tv[i - 1]));
+  return 100;
+}
+
+bool power_read(PowerInfo &o) {
+  uint8_t r0b, r0e, r0f, r11, r12;
+  if (!rd(0x0b, r0b) || !rd(0x0e, r0e) || !rd(0x0f, r0f) || !rd(0x11, r11) || !rd(0x12, r12)) return false;
+  o.vbat = 2.304f + (r0e & 0x7f) * 0.02f;
+  o.vsys = 2.304f + (r0f & 0x7f) * 0.02f;
+  o.vbus = (r11 & 0x7f) ? 2.6f + (r11 & 0x7f) * 0.1f : 0.0f;
+  o.chgmA = (r12 & 0x7f) * 50;
+  o.vbusPresent = (r0b & 0xE0) != 0;
+  int cs = (r0b >> 3) & 3;               // 1 pre-charge, 2 fast charge
+  o.charging = (cs == 1 || cs == 2);
+  o.pct = power_percent(o.vbat);
+  return true;
+}

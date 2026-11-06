@@ -11,6 +11,7 @@
 #endif
 
 static volatile bool ledsOff = false;
+static uint8_t levelOff = 0;   // user setting 'off': ring stays dark but the code keeps running
 
 static Adafruit_NeoPixel strip(LED_COUNT, PIN_LED, NEO_GRB + NEO_KHZ800);
 static uint32_t ringUntil = 0, ringColor = 0;
@@ -21,6 +22,13 @@ static uint32_t pairStartedAt = 0;
 
 // Brightness is low on purpose: 8 LEDs at full tilt plus Wi-Fi TX can brown out a USB-powered board.
 void leds_off() { ledsOff = true; strip.clear(); strip.show(); }
+
+void leds_set_level(uint8_t level) {
+  static const uint8_t br[4] = {0, 12, 32, 72};
+  levelOff = level == 0;
+  strip.setBrightness(br[level % 4]);
+  if (levelOff) { strip.clear(); strip.show(); }
+}
 
 void leds_begin() { strip.begin(); strip.setBrightness(32); strip.clear(); strip.show(); }
 
@@ -36,7 +44,7 @@ void leds_pad_event(int slot, PadEvent ev) {
 static uint32_t col(uint8_t r, uint8_t g, uint8_t b) { return strip.Color(r, g, b); }
 
 void leds_tick() {
-  if (ledsOff) return;
+  if (ledsOff || levelOff) return;
   static uint32_t last = 0;
   uint32_t now = millis();
   if (now - last < 40) return;
@@ -61,7 +69,7 @@ void leds_tick() {
 #if LED_COUNT == 1
 #ifdef XINPUT_MODE
   if (now < 6000) {   // right after boot: purple blinks = XInput layout (1 = one pad, 2 = two pads wired-style, 3 = two pads receiver-style)
-    int m = xinput_mode() + 1;
+    int m = xinput_style() + 1;
     uint32_t period = m * 500 + 1100, t = now % period;
     strip.setPixelColor(0, (t < (uint32_t)m * 500 && (t % 500) < 250) ? col(150, 0, 255) : 0);
     strip.show();
