@@ -56,6 +56,7 @@ void sparkline(G &g, int x, int y, int w, int h, const uint16_t *v, int n, uint1
 
 // icons, drawn centred on (cx, cy) in roughly a 28x28 box
 void icoPulse(G &g, int cx, int cy, col_t k, col_t hole = 0);
+void icoDown(G &g, int cx, int cy, col_t k, col_t hole = 0);
 void icoList(G &g, int cx, int cy, col_t k, col_t hole = 0);
 void icoGamepad(G &g, int cx, int cy, col_t k, col_t hole = 0);
 void icoPair(G &g, int cx, int cy, col_t k, col_t hole = 0);

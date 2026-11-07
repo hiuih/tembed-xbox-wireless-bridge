@@ -235,6 +235,13 @@ device (one HID gamepad collection each). The ESP32-S3 has Bluetooth LE only, it
 read XInput will not see it; games using generic HID/DirectInput/SDL will), and it shares the 2.4 GHz radio with the Xbox
 link, so expect a little more latency than USB. Off by default.
 
+**Updating from GitHub (1.1):** *Update* tile (or Settings > Update from GitHub) restarts the board into update mode (Xbox
+radio and USB off). Set up Wi-Fi once: pick a scanned network and type the password with the on-screen keyboard, or use the
+router's WPS button. *Check for updates* reads `latest.json` from the newest GitHub release, *Download and install* saves
+the new `.bin` into the SD card's `downloads` folder (checked against its SHA-256, replacing older Xbox Bridge files) and
+restarts into Launcher, where you pick SD > XboxBridge to install. The running app cannot overwrite its own slot, and the
+other slot may hold Bruce, so Launcher does the final install. Publish a new version with `tools/release.sh`.
+
 **Automatic Xbox pads:** the number of Xbox controllers shown to the PC follows the number actually connected (1 to 4). It grows
 1.5 s after another controller becomes ready and shrinks only after the extra ones have been gone for 30 s. The change is a soft
 USB unplug/replug (about a second), not a restart. *Settings > USB style* switches between the two descriptor styles (A/B).

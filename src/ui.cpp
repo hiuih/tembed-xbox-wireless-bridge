@@ -23,6 +23,7 @@
 #include "evlog.h"
 #include "dlog.h"
 #include "ble.h"
+#include "updater.h"
 
 #define BAND_H 85
 #define FRAME_MS 50
@@ -61,6 +62,16 @@ void ui_pump() {
 }
 static uint32_t lastPower = 0;
 static Screen prevScreen = SC_HOME;
+static SemaphoreHandle_t spiLock = nullptr;
+void ui_spi_lock() { if (spiLock) xSemaphoreTake(spiLock, portMAX_DELAY); }
+void ui_spi_unlock() { if (spiLock) xSemaphoreGive(spiLock); }
+
+// on-screen keyboard (Wi-Fi password)
+static char kbBuf[66]; static int kbLen = 0, kbIdx = 0, kbPage = 0; static bool kbShow = false;
+static char kbSsid[33];
+static const char *kbPages[3] = {"abcdefghijklmnopqrstuvwxyz0123456789", "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", "!@#$%^&*()-_=+[]{};:',.<>/?|~`\\\""};
+static int kbCount() { return (int)strlen(kbPages[kbPage]) + 5; }   // + page, delete, space, show, OK
+
 static_assert(EVLOG_N == UI_LOG_N && EVLOG_LEN == UI_LOG_LEN, "event log sizes must match the UI snapshot");
 
 // ---------------------------------------------------------------- helpers
@@ -116,8 +127,11 @@ static void fillSnap() {
   if (snap.nrfOk) { memcpy(snap.spec, nrf24_occupancy(), 84); memcpy(snap.peak, nrf24_peak(), 84); }
   snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
   snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
-  snap.fwVersion = "1.0";
+  snap.fwVersion = FW_VERSION;
   snap.bleOn = cfg.bleOn; snap.bleState = ble_state();
+  snap.updMode = updater_active();
+  if (snap.updMode) updater_view(snap.upd);
+  memcpy(snap.kb, kbBuf, sizeof(snap.kb)); snap.kbIdx = kbIdx; snap.kbPage = kbPage; snap.kbShow = kbShow;
   snap.autoDim = cfg.autoDim; snap.ringFx = cfg.ringFx; snap.deadzone = cfg.deadzone; snap.pairWin = cfg.pairWin;
   snap.flip = cfg.flip; snap.wakePc = cfg.wakePc; snap.pairBoot = cfg.pairBoot; snap.pairTotalMs = settings_pair_ms();
   snap.logN = evlog_copy(snap.logMsg, snap.logAtS);
@@ -222,7 +236,8 @@ static void settingsClick() {
     case 15: if (nav.confirm) { nav.confirm = false; toast(ble_forget_hosts() ? "Bluetooth hosts forgotten" : "Turn Bluetooth on first"); } else nav.confirm = true; return;
     case 16: if (nav.confirm) { forgetAll(); nav.confirm = false; evlog_add("-All controllers forgotten"); } else nav.confirm = true; return;
     case 17: if (nav.confirm) { toast("Bootloader..."); delay(500); boot_to_download(); } else nav.confirm = true; return;
-    case 18: goTo(SC_ABOUT); return;
+    case 18: toast("Restarting into update mode..."); dlog("entering update mode"); delay(900); updater_request_and_restart(); return;
+    case 19: goTo(SC_ABOUT); return;
   }
   settings_save();
 }
@@ -240,6 +255,68 @@ static void padAction() {
   }
 }
 
+// ---------------------------------------------------------------- update screen input
+static void kbType(char c) { if (kbLen < 63) { kbBuf[kbLen++] = c; kbBuf[kbLen] = 0; } }
+
+static void updateInput(int steps, bool click, bool back) {
+  const UpdView &u = snap.upd;
+  switch (u.state) {
+    case U_MENU:
+      moveSel(steps, 3);
+      if (back) { updater_exit(); return; }
+      if (click) {
+        if (nav.sel == 0) { if (u.saved[0]) updater_cmd_check(); else { nav.sel = 0; updater_cmd_scan(); } }
+        else if (nav.sel == 1) { nav.sel = 0; updater_cmd_scan(); }
+        else updater_exit();
+      }
+      break;
+    case U_SCAN: {
+      int rows = u.nNets + 3;                     // WPS, networks..., rescan, back
+      moveSel(steps, rows);
+      if (back) { nav.sel = 1; updater_cmd_menu(); return; }
+      if (click) {
+        if (nav.sel == 0) updater_cmd_wps();
+        else if (nav.sel <= u.nNets) {
+          const char *ss = u.ssid[nav.sel - 1];
+          strlcpy(kbSsid, ss, sizeof(kbSsid));
+          if (!u.secure[nav.sel - 1]) { updater_cmd_connect(ss, ""); }
+          else { kbLen = 0; kbBuf[0] = 0; kbIdx = 0; kbPage = 0; kbShow = false; updater_cmd_pass(ss); }
+        }
+        else if (nav.sel == u.nNets + 1) updater_cmd_scan();
+        else { nav.sel = 1; updater_cmd_menu(); }
+      }
+      break;
+    }
+    case U_PASS: {
+      int cnt = kbCount(), nchars = cnt - 5;
+      if (steps) { kbIdx = ((kbIdx + steps) % cnt + cnt) % cnt; }
+      if (back) { if (kbLen) kbBuf[--kbLen] = 0; else updater_cmd_scan(); }
+      if (click) {
+        if (kbIdx < nchars) kbType(kbPages[kbPage][kbIdx]);
+        else switch (kbIdx - nchars) {
+          case 0: kbPage = (kbPage + 1) % 3; kbIdx = 0; break;
+          case 1: if (kbLen) kbBuf[--kbLen] = 0; break;
+          case 2: kbType(' '); break;
+          case 3: kbShow = !kbShow; break;
+          case 4: updater_cmd_connect(kbSsid, kbBuf); break;
+        }
+      }
+      break;
+    }
+    case U_READY:
+      moveSel(steps, 2);
+      if (back) updater_cmd_menu();
+      if (click) { if (nav.sel == 0) updater_cmd_install(); else updater_cmd_menu(); }
+      break;
+    case U_WPS: case U_BUSY: case U_DOWNLOAD:
+      if (back || click) updater_cmd_cancel();
+      break;
+    case U_UPTODATE: case U_ERROR: case U_DONE:
+      if (back || click) { nav.sel = 0; updater_cmd_menu(); }
+      break;
+  }
+}
+
 static void handleInput() {
   int steps = encoder_take();
   bool click = knob_take_click();
@@ -249,10 +326,11 @@ static void handleInput() {
     dlog("IN steps=%d click=%d back=%d screen=%d sel=%d ready=%d", steps, (int)click, (int)back, (int)nav.screen, nav.sel, snap.nReady);
   }
 
+  if (nav.screen == SC_UPDATE) { updateInput(steps, click, back); return; }
   if (back) {
     switch (nav.screen) {
       case SC_PAD: goTo(SC_PADS); break;
-      case SC_ABOUT: if (prevScreen == SC_SETTINGS) goTo(SC_SETTINGS, 18); else { goTo(SC_HOME); nav.sel = ui_home_index(SC_ABOUT); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; } break;
+      case SC_ABOUT: if (prevScreen == SC_SETTINGS) goTo(SC_SETTINGS, 19); else { goTo(SC_HOME); nav.sel = ui_home_index(SC_ABOUT); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; } break;
       case SC_HOME: break;
       default: { int from = nav.screen; goTo(SC_HOME); nav.sel = ui_home_index((Screen)from); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; }
     }
@@ -261,7 +339,7 @@ static void handleInput() {
   switch (nav.screen) {
     case SC_HOME:
       moveSel(steps, HOME_TILES);
-      if (click) goTo(ui_home_screen(nav.sel));
+      if (click) { Screen t = ui_home_screen(nav.sel); if (t == SC_UPDATE) { toast("Restarting into update mode..."); dlog("entering update mode"); delay(900); updater_request_and_restart(); } else goTo(t); }
       break;
     case SC_PADS: {
       int rows = padRows() + 1;
@@ -300,14 +378,14 @@ static void uiTask(void *) {
     uint32_t t0 = millis();
     esp_task_wdt_reset();
     boot_ui_mark(1);
-    if (nav.screen == SC_SPLASH && t0 - bootMs > 1700) goTo(SC_HOME);
+    if (nav.screen == SC_SPLASH && t0 - bootMs > 1700) goTo(updater_active() ? SC_UPDATE : SC_HOME);
 
     if (t0 - lastPower > 1000) { lastPower = t0; power_read(power); }
     fillSnap();
     updateTrails();
     if (nav.screen != SC_SPLASH) handleInput();
     if (rumbleOffAt && (int32_t)(t0 - rumbleOffAt) >= 0) { rumbleOffAt = 0; post(C_RUMBLE, rumbleSlot, 0); }
-    if (snap.nReady > 0) lastActivity = millis();
+    if (snap.nReady > 0 || (snap.updMode && snap.upd.state != U_MENU && snap.upd.state != U_SCAN && snap.upd.state != U_PASS)) lastActivity = millis();
     // idle: dim after a minute, sleep after the configured time with no controller
     // idle time is measured from a fresh millis(): t0 is older than an input stamped later in this same pass, and
     // t0 - lastActivity then wraps to ~4 billion ms, which used to put the board to sleep on every first input
@@ -318,13 +396,15 @@ static void uiTask(void *) {
     animate();
     boot_ui_mark(2);
 
-    if (nav.screen == SC_SPECTRUM) nrf24_scan_slice(9000);
+    if (nav.screen == SC_SPECTRUM) { ui_spi_lock(); nrf24_scan_slice(9000); ui_spi_unlock(); }
 
     for (int b = 0; b < 2; b++) {
       boot_ui_mark(3 + b);
       G g{band, b * BAND_H};
       ui_render(g, snap, nav);
+      ui_spi_lock();
       tft.drawRGBBitmap(0, b * BAND_H, band->getBuffer(), 320, BAND_H);
+      ui_spi_unlock();
     }
     uint32_t used = millis() - t0;
     vTaskDelay(pdMS_TO_TICKS(used >= FRAME_MS ? 1 : FRAME_MS - used));
@@ -357,6 +437,7 @@ void ui_begin() {
   lastActivity = millis();
   goTo(SC_SPLASH);
   // low priority on core 0 (alongside Wi-Fi): drawing can never delay the protocol loop on core 1
+  spiLock = xSemaphoreCreateMutex();
   cmdQ = xQueueCreate(8, sizeof(Cmd));
   xTaskCreatePinnedToCore(uiTask, "ui", 16384, nullptr, 1, nullptr, 0);
 }

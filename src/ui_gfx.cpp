@@ -216,3 +216,13 @@ void icoList(G &g, int cx, int cy, col_t k, col_t hole) {
     g.rrect(cx - 4, cy - 10 + i * 8, 16 - i * 3, 4, 2, k);
   }
 }
+
+// download arrow into a tray: update
+void icoDown(G &g, int cx, int cy, col_t k, col_t hole) {
+  (void)hole;
+  g.rect(cx - 4, cy - 12, 9, 12, k);
+  g.tri(cx - 11, cy - 1, cx + 11, cy - 1, cx, cy + 10, k);
+  g.rect(cx - 12, cy + 12, 25, 3, k);
+  g.rect(cx - 12, cy + 7, 3, 8, k);
+  g.rect(cx + 10, cy + 7, 3, 8, k);
+}

@@ -124,14 +124,14 @@ static const char *kPairWin[4] = {"30 sec", "1 min", "2 min", "5 min"};
 static const char *kLabels[SETTINGS_ROWS] = {
   "Brightness", "Auto-dim", "Auto-sleep", "Accent colour", "LED ring", "Ring idle effect", "Flip screen", "Knob direction",
   "USB mode", "Bluetooth", "Stick deadzone", "Xbox button wakes PC", "Pairing window", "Pair on power-up", "Reset settings",
-  "Forget Bluetooth hosts", "Forget all controllers", "Bootloader mode", "About"};
+  "Forget Bluetooth hosts", "Forget all controllers", "Bootloader mode", "Update from GitHub", "About"};
 
 static const char *kHints[SETTINGS_ROWS] = {
   "screen backlight", "dim the screen when idle", "deep sleep after this long with no controller", "colour of the interface",
   "brightness of the 8 LEDs", "what the ring does with no controller", "rotate the screen 180 degrees", "reverse the turn direction",
   "Wired 360 pad: most games.  360 receiver: dongle", "Bluetooth LE gamepads for a computer (restarts)", "ignore small stick drift (applies on the PC)",
   "Xbox button wakes a sleeping computer", "how long pairing stays open", "open pairing every time it powers on",
-  "back to factory settings", "unpair the computer from Bluetooth", "unpair every controller", "reboot into the USB flasher", "version, memory, reset info"};
+  "back to factory settings", "unpair the computer from Bluetooth", "unpair every controller", "reboot into the USB flasher", "download the newest version (restarts)", "version, memory, reset info"};
 
 const char *settingsHint(int row) { return row >= 0 && row < SETTINGS_ROWS ? kHints[row] : ""; }
 int settingsDanger(int row) { return row >= 14 && row <= 17; }
@@ -176,7 +176,7 @@ void scr_settings(G &g, const Snap &s, const Nav &n) {
     if (r == 3) g.disc(294 + dx, y + 10, 6, s.accent == 0 ? rgb(34, 214, 92) : s.accent == 1 ? rgb(72, 152, 255) : s.accent == 2 ? rgb(168, 112, 255) : rgb(255, 148, 40));
     else if (v[0]) g.textR(302 + dx, y + 15, v, sel ? T.accent : T.dim, FONT_B);
     else if (sel && danger) g.textR(302 + dx, y + 15, n.confirm ? "click again!" : "click", T.bad, FONT_B);
-    else if (r == 18) g.textR(302 + dx, y + 15, ">", T.dim, FONT_B);
+    else if (r == 19) g.textR(302 + dx, y + 15, ">", T.dim, FONT_B);
   }
   ui_chrome(g, s, n, "Settings", settingsHint(n.sel), true);
   // scroll bar

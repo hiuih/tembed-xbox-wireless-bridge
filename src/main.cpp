@@ -20,6 +20,10 @@
 #include "evlog.h"
 #include "dlog.h"
 #include "ble.h"
+#if HAS_SCREEN
+#include "updater.h"
+static bool updMode = false;     // update mode: Xbox radio and USB are off; the board downloads a new version
+#endif
 
 #ifndef XINPUT_MODE
 static uint32_t restartAt = 0;
@@ -96,24 +100,41 @@ void setup() {
 #endif
   esp_task_wdt_init(5, true);   // panic + reset if the main loop stalls for 5 s
   esp_task_wdt_add(NULL);
+#if HAS_SCREEN
+  updMode = updater_boot_flag();
+  if (updMode) dlog("UPDATE MODE");
+#endif
   pairing_begin();
+#if HAS_SCREEN
+  if (!updMode) {
+#endif
   hid_begin();                                   // USB first, so a power hiccup can't starve enumeration
   uint32_t t0 = millis();
   while (!hid_mounted() && millis() - t0 < 3000) delay(10);   // let the computer enumerate us
   delay(300);
+#if HAS_SCREEN
+  }
+#endif
 #if HAS_PMIC
   power_begin();
+#endif
+#if HAS_SCREEN
+  if (!updMode)
 #endif
   radio_begin();
   delay(200);
   leds_begin();
 #if HAS_SCREEN
   delay(200);
+  if (updMode) updater_begin();
   ui_begin();
-  ble_begin(cfg.bleOn);
+  if (!updMode) ble_begin(cfg.bleOn);
 #endif
 #ifdef AUTO_PAIR_BOOT_MS
   pairing_start(AUTO_PAIR_BOOT_MS);   // headless: pairing window opens at every power-up
+#endif
+#if HAS_SCREEN
+  if (updMode) return;
 #endif
   gip_begin(onPad);
   USBSerial.printf("XBOX BRIDGE ready, known controllers: %d\n", pairing_count());
@@ -124,6 +145,19 @@ static uint32_t rumbleOff = 0;
 
 void loop() {
   esp_task_wdt_reset();
+#if HAS_SCREEN
+  if (updMode) {
+    updater_tick();
+    bootguard_tick();
+#if HAS_PMIC
+    powerbtn_tick();
+#endif
+    knob_tick();
+    leds_tick();
+    delay(1);
+    return;
+  }
+#endif
   stats_loop_begin();
   boot_mark(1);
   RadioEvent ev;

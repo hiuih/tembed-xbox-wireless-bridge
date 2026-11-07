@@ -1,6 +1,9 @@
 #pragma once
 #include <Arduino.h>
 
+#define FW_VERSION "1.1"
+#define UPDATE_REPO "hiuih/tembed-xbox-wireless-bridge"
+
 // Max simultaneous controllers (xone's dongle supports 16; USB descriptor budget limits us to 8).
 #define MAX_PADS 8
 

@@ -27,6 +27,25 @@ struct PerfView {
 };
 
 #define UI_HIST 60
+
+// Over-the-air update screen (see updater.cpp). The updater runs in a special boot mode with the Xbox radio off.
+enum UpdState : uint8_t { U_MENU, U_SCAN, U_PASS, U_WPS, U_BUSY, U_READY, U_UPTODATE, U_DOWNLOAD, U_DONE, U_ERROR };
+#define UPD_NETS 12
+struct UpdView {
+  UpdState state;
+  char msg[64], detail[64];
+  uint8_t progress;                // 0..100
+  int nNets;
+  char ssid[UPD_NETS][33];
+  int8_t rssi[UPD_NETS];
+  bool secure[UPD_NETS];
+  char saved[33];                  // remembered network
+  bool connected;
+  char newVer[12];
+  uint32_t size;
+  uint32_t wpsLeftS;
+  uint32_t doneLeftS;
+};
 #define UI_LOG_N 24
 #define UI_LOG_LEN 30
 
@@ -62,6 +81,9 @@ struct Snap {
   uint8_t brightness, ledLevel, sleepMin, accent;
   bool reverseKnob;
   uint8_t autoDim, ringFx, deadzone, pairWin;
+  bool updMode;                    // running in update mode (no Xbox radio)
+  UpdView upd;
+  char kb[66]; int kbIdx, kbPage; bool kbShow;   // on-screen keyboard for the Wi-Fi password
   bool flip, wakePc, pairBoot, bleOn;
   uint8_t bleState;                // 0 off, 1 advertising, 2 connected
   uint32_t pairTotalMs;            // length of the pairing window in use
@@ -79,7 +101,7 @@ struct Snap {
 };
 
 enum Screen : uint8_t {
-  SC_SPLASH, SC_HOME, SC_PADS, SC_PAD, SC_PAIR, SC_RADIO, SC_SPECTRUM, SC_POWER, SC_SETTINGS, SC_ABOUT, SC_LAG, SC_LOG, SC_COUNT
+  SC_SPLASH, SC_HOME, SC_PADS, SC_PAD, SC_PAIR, SC_RADIO, SC_SPECTRUM, SC_POWER, SC_SETTINGS, SC_ABOUT, SC_LAG, SC_LOG, SC_UPDATE, SC_COUNT
 };
 
 struct Nav {

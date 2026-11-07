@@ -101,6 +101,21 @@ int main(int argc, char **argv) {
   fillSnap(2); setNav(SC_LOG, 0); snap.nowMs = 160; render("fx_log_in");
   fillSnap(2); snap.pairing = true; snap.pairLeftMs = 41000; setNav(SC_PAIR); snap.nowMs = 9000; render("fx_pair_sweep");
   fillSnap(2); setNav(SC_SPLASH); snap.nowMs = 1100; render("fx_splash_mid");
+  { fillSnap(2); snap.updMode = true; UpdView &u = snap.upd; strcpy(snap.kb, "hunter2Pass"); snap.kbIdx = 14;
+    strcpy(u.saved, "HomeNet-5G"); strcpy(u.msg, "Connected"); strcpy(u.detail, "192.168.1.42"); u.state = U_MENU; setNav(SC_UPDATE, 0); render("upd_menu");
+    u.nNets = 6; const char *nn[] = {"HomeNet-5G", "Neighbour_2G", "CoffeeShop", "TP-Link_A1B2", "xfinitywifi", "Guest"}; for (int i = 0; i < 6; i++) { strcpy(u.ssid[i], nn[i]); u.rssi[i] = -45 - i * 8; u.secure[i] = i != 4; }
+    u.state = U_SCAN; setNav(SC_UPDATE, 2); render("upd_scan");
+    u.state = U_PASS; strcpy(u.detail, "HomeNet-5G"); setNav(SC_UPDATE, 0); render("upd_pass");
+    snap.kbPage = 2; snap.kbIdx = 35; render("upd_pass_sym"); snap.kbPage = 0;
+    u.state = U_WPS; strcpy(u.msg, "wps"); u.wpsLeftS = 97; render("upd_wps");
+    u.state = U_BUSY; strcpy(u.msg, "Checking for updates..."); u.detail[0] = 0; render("upd_busy");
+    u.state = U_READY; strcpy(u.detail, "1.1  ->  1.2"); u.size = 1380000; setNav(SC_UPDATE, 0); render("upd_ready");
+    u.state = U_UPTODATE; strcpy(u.detail, "1.1"); render("upd_uptodate");
+    u.state = U_DOWNLOAD; strcpy(u.msg, "Downloading..."); u.progress = 63; render("upd_download");
+    u.state = U_DONE; u.doneLeftS = 4; render("upd_done");
+    u.state = U_ERROR; strcpy(u.msg, "Could not connect"); strcpy(u.detail, "wrong password?"); render("upd_error"); }
+  fillSnap(2); setNav(SC_HOME, 9); render("home_update");
+  fillSnap(2); setNav(SC_SETTINGS, 18, 14.0f); render("settings_update");
   fillSnap(2); setNav(SC_PAD, 0); snprintf(nav.toast, sizeof(nav.toast), "Rumble sent"); nav.toastUntilMs = snap.nowMs + 1500; render("pad_toast");
   return 0;
 }

@@ -4,7 +4,7 @@
 #include <math.h>
 
 const char *ui_screen_title(Screen sc) {
-  static const char *t[SC_COUNT] = {"Xbox Bridge", "Xbox Bridge", "Controllers", "Controller", "Pair", "Radio", "Spectrum", "Power", "Settings", "About", "Latency", "Event log"};
+  static const char *t[SC_COUNT] = {"Xbox Bridge", "Xbox Bridge", "Controllers", "Controller", "Pair", "Radio", "Spectrum", "Power", "Settings", "About", "Latency", "Event log", "Update"};
   return t[sc];
 }
 
@@ -115,7 +115,7 @@ void scr_splash(G &g, const Snap &s, const Nav &n) {
 struct Tile { const char *name; Screen sc; };
 static const Tile kTiles[HOME_TILES] = {
   {"Controllers", SC_PADS}, {"Pair", SC_PAIR}, {"Radio", SC_RADIO}, {"Spectrum", SC_SPECTRUM}, {"Latency", SC_LAG},
-  {"Log", SC_LOG}, {"Power", SC_POWER}, {"Settings", SC_SETTINGS}, {"About", SC_ABOUT}};
+  {"Log", SC_LOG}, {"Power", SC_POWER}, {"Settings", SC_SETTINGS}, {"About", SC_ABOUT}, {"Update", SC_UPDATE}};
 Screen ui_home_screen(int i) { return kTiles[i % HOME_TILES].sc; }
 int ui_home_index(Screen sc) { for (int i = 0; i < HOME_TILES; i++) if (kTiles[i].sc == sc) return i; return 0; }
 
@@ -129,6 +129,7 @@ static void tileIcon(G &g, int i, int cx, int cy, col_t k, col_t hole) {
     case SC_LOG: icoList(g, cx, cy, k, hole); break;
     case SC_POWER: icoPower(g, cx, cy, k, hole); break;
     case SC_ABOUT: icoInfo(g, cx, cy, k, hole); break;
+    case SC_UPDATE: icoDown(g, cx, cy, k, hole); break;
     default: icoGear(g, cx, cy, k, hole); break;
   }
 }
@@ -163,6 +164,7 @@ void scr_home(G &g, const Snap &s, const Nav &n) {
       case SC_LOG: snprintf(sub, sizeof(sub), "%d events", s.logN); break;
       case SC_POWER: if (s.pmicOk) snprintf(sub, sizeof(sub), "%d%% %s", s.battPct, s.charging ? "charging" : "battery"); else snprintf(sub, sizeof(sub), "no gauge"); break;
       case SC_SETTINGS: snprintf(sub, sizeof(sub), "%s", usbModeName(s.style)); break;
+      case SC_UPDATE: snprintf(sub, sizeof(sub), "installed %s", s.fwVersion ? s.fwVersion : "dev"); break;
       default: snprintf(sub, sizeof(sub), "fw %s", s.fwVersion ? s.fwVersion : "dev"); break;
     }
     g.textC(x + 48, y + 49, sub, T.dim, FONT_S);
@@ -175,8 +177,8 @@ void scr_home(G &g, const Snap &s, const Nav &n) {
     g.rframe(sx - 2, sy - 2, 100, 62, 9, mix(T.bg, T.accent, (uint8_t)pl)); }
   ui_chrome(g, s, n, "Xbox Bridge", "turn: move    click: open    hold: pair    key: sleep", true);
   // page dots
-  int pages = (HOME_TILES + 5) / 6;
-  for (int p = 0; p < pages; p++) g.disc(314, 70 + p * 8, 2, (n.scrollAnim > 0.5f) == (p == 1) ? T.accent : T.border);
+  { int rows = (HOME_TILES + 2) / 3, pos = (int)lroundf(n.scrollAnim), dots = rows - 1;
+    for (int p = 0; p < dots; p++) g.disc(314, 70 + p * 8, 2, p == pos ? T.accent : T.border); }
   wipe(g, s, n);
 }
 
@@ -356,6 +358,7 @@ void ui_render(G &g, const Snap &s, const Nav &n) {
     case SC_ABOUT: scr_about(g, s, n); break;
     case SC_LAG: scr_lag(g, s, n); break;
     case SC_LOG: scr_log(g, s, n); break;
+    case SC_UPDATE: scr_update(g, s, n); break;
     default: break;
   }
   postTransition(g, s, n);

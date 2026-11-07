@@ -26,13 +26,15 @@ void scr_about(G &g, const Snap &s, const Nav &n);
 // screens (ui_screens3.cpp)
 void scr_lag(G &g, const Snap &s, const Nav &n);
 void scr_log(G &g, const Snap &s, const Nav &n);
+// screens (ui_screens4.cpp)
+void scr_update(G &g, const Snap &s, const Nav &n);
 
-#define HOME_TILES 9
+#define HOME_TILES 10
 Screen ui_home_screen(int tile);      // screen opened by a home tile
 int ui_home_index(Screen sc);         // tile that opens this screen
 void settingsValue(const Snap &s, int row, char *out, size_t n);
 const char *settingsHint(int row);
-#define SETTINGS_ROWS 19
+#define SETTINGS_ROWS 20
 int settingsDanger(int row);          // 1 if the row needs a second click
 
 #define SB_H 22
