@@ -132,14 +132,6 @@ static uint16_t drvOpen(uint8_t rhport, tusb_desc_interface_t const *itf, uint16
 
 static bool drvControl(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req) {
   if (stage == CONTROL_STAGE_SETUP) {
-    // debug log reader: vendor request 0xB0, wValue = 240-byte chunk number, answers with that part of the log
-    if (req->bmRequestType_bit.type == TUSB_REQ_TYPE_VENDOR && req->bmRequestType_bit.direction == TUSB_DIR_IN && req->bRequest == 0xB0) {
-      static uint8_t chunk[240];
-      size_t n = dlog_read((uint32_t)req->wValue * sizeof(chunk), chunk, sizeof(chunk));
-      if (n > req->wLength) n = req->wLength;
-      dlog_note_read();
-      return tud_control_xfer(rhport, req, chunk, (uint16_t)n);
-    }
     if (req->wLength == 0) return tud_control_status(rhport, req);
     return false;   // unknown data request: stall
   }
@@ -159,6 +151,20 @@ static bool drvXfer(uint8_t rhport, uint8_t ep, xfer_result_t result, uint32_t n
       return true;
     }
     if (ep == epIn[i]) return true;
+  }
+  return false;
+}
+
+// Debug log reader: vendor request 0xB0, wValue = 240-byte chunk number. The Arduino USB core routes every vendor-type
+// control request here (not to class drivers), so this is where it has to be answered.
+extern "C" bool tinyusb_vendor_control_request_cb(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req) {
+  if (req->bRequest == 0xB0 && req->bmRequestType_bit.direction == TUSB_DIR_IN) {
+    if (stage != CONTROL_STAGE_SETUP) return true;
+    static uint8_t chunk[240];
+    size_t n = dlog_read((uint32_t)req->wValue * sizeof(chunk), chunk, sizeof(chunk));
+    if (n > req->wLength) n = req->wLength;
+    dlog_note_read();
+    return tud_control_xfer(rhport, req, chunk, (uint16_t)n);
   }
   return false;
 }

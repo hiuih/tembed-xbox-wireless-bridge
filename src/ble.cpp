@@ -6,12 +6,20 @@
 #include "gip.h"
 #include "evlog.h"
 #include "dlog.h"
+#include "settings.h"
+#include "esp_attr.h"
+#include "esp_heap_caps.h"
 
 static NimBLEServer *server = nullptr;
 static NimBLEAdvertising *adv = nullptr;
 static NimBLECharacteristic *inputs[BLE_PADS];
 static volatile int state = BLE_OFF;
 static bool inited = false;
+// If the previous run crashed while starting Bluetooth, this is still set: Bluetooth is then switched off for good
+// (otherwise a crash here would be a boot loop).
+static RTC_NOINIT_ATTR uint32_t bleTrying;
+#define BLE_TRYING 0xB1E00001u
+#define BLE_MIN_HEAP 56000
 
 // One Gamepad collection per pad (report id 1..4): 16 buttons, hat, 4 sticks (16 bit), 2 triggers (10 bit in 16).
 // Report payload (no id): buttons u16, hat u8 (low nibble, 0 = none, 1..8 clockwise from up), LX LY RX RY i16, RT LT u16 = 15 bytes.
@@ -49,8 +57,29 @@ static SrvCb srvCb;
 
 void ble_begin(bool on) {
   if (!on) return;
+  if (bleTrying == BLE_TRYING) {
+    bleTrying = 0;
+    cfg.bleOn = false; settings_save();
+    dlog("BLE: the last start crashed -> Bluetooth switched off");
+    evlog_add("-Bluetooth crashed: now off");
+    return;
+  }
+  size_t freeB = heap_caps_get_free_size(MALLOC_CAP_INTERNAL), bigB = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+  dlog("BLE: heap before init free=%u largest=%u (need %u)", (unsigned)freeB, (unsigned)bigB, BLE_MIN_HEAP);
+  if (freeB < BLE_MIN_HEAP) {
+    dlog("BLE: not enough memory, not starting");
+    evlog_add("!Bluetooth: not enough memory");
+    return;
+  }
+  bleTrying = BLE_TRYING;
   buildMap();
   NimBLEDevice::init("Xbox Bridge");
+  if (!NimBLEDevice::getInitialized()) {
+    bleTrying = 0;
+    dlog("BLE: init failed");
+    evlog_add("-Bluetooth failed to start");
+    return;
+  }
   NimBLEDevice::setSecurityAuth(true, false, true);          // bond, no MITM, secure connections
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);  // "just works" pairing
   NimBLEDevice::setPower(ESP_PWR_LVL_P3);
@@ -71,7 +100,8 @@ void ble_begin(bool on) {
   adv->start();
   inited = true;
   state = BLE_ADVERTISING;
-  dlog("BLE up: advertising as 'Xbox Bridge', %d pad collections", BLE_PADS);
+  bleTrying = 0;
+  dlog("BLE up: advertising as 'Xbox Bridge', %d pad collections, heap now free=%u", BLE_PADS, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   evlog_add("Bluetooth advertising");
 }
 

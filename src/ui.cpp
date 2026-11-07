@@ -25,7 +25,7 @@
 #include "ble.h"
 #include "updater.h"
 
-#define BAND_H 85
+#define BAND_H 43      // 4 bands (43+43+43+41 rows): the canvas is only 27 KB, which leaves room for Bluetooth
 #define FRAME_MS 50
 
 static Adafruit_ST7789 tft(&SPI, PIN_LCD_CS, PIN_LCD_DC, -1);
@@ -398,12 +398,12 @@ static void uiTask(void *) {
 
     if (nav.screen == SC_SPECTRUM) { ui_spi_lock(); nrf24_scan_slice(9000); ui_spi_unlock(); }
 
-    for (int b = 0; b < 2; b++) {
+    for (int b = 0; b < 4; b++) {
       boot_ui_mark(3 + b);
       G g{band, b * BAND_H};
       ui_render(g, snap, nav);
       ui_spi_lock();
-      tft.drawRGBBitmap(0, b * BAND_H, band->getBuffer(), 320, BAND_H);
+      tft.drawRGBBitmap(0, b * BAND_H, band->getBuffer(), 320, (b + 1) * BAND_H <= 170 ? BAND_H : 170 - b * BAND_H);
       ui_spi_unlock();
     }
     uint32_t used = millis() - t0;
