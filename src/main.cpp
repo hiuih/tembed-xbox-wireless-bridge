@@ -16,6 +16,8 @@
 #endif
 #include "esp_task_wdt.h"
 #include "stats.h"
+#include "settings.h"
+#include "evlog.h"
 
 #ifndef XINPUT_MODE
 static uint32_t restartAt = 0;
@@ -27,8 +29,15 @@ static void onPad(int slot, PadEvent ev) {
   USBSerial.printf("[pad %d] %s %02x:%02x:%02x:%02x:%02x:%02x vid=%04x pid=%04x\n", slot, n[ev],
                 p.mac[0], p.mac[1], p.mac[2], p.mac[3], p.mac[4], p.mac[5], p.vid, p.pid);
   leds_pad_event(slot, ev);
+  switch (ev) {
+    case PADEV_CONNECTED: evlog_add("Pad %d found", slot + 1); break;
+    case PADEV_READY: evlog_add("+Pad %d ready", slot + 1); break;
+    case PADEV_DISCONNECTED: evlog_add("-Pad %d lost", slot + 1); break;
+    case PADEV_GUIDE_DOWN: evlog_add("Pad %d Xbox button", slot + 1); break;
+    default: break;
+  }
   // Like a real Xbox: the Xbox button (or a controller powering on) wakes the computer.
-  if (ev == PADEV_GUIDE_DOWN || ev == PADEV_READY) {
+  if ((ev == PADEV_GUIDE_DOWN || ev == PADEV_READY) && cfg.wakePc) {
     if (hid_wake_host()) { leds_flash(140, 140, 140, 600); USBSerial.println("USB remote wakeup sent"); }
   }
 #ifndef XINPUT_MODE
@@ -136,7 +145,7 @@ void loop() {
 
   while (USBSerial.available()) {
     char c = USBSerial.read();
-    if (c == 'p') { if (pairing_active()) pairing_stop(); else pairing_start(); USBSerial.printf("pairing=%d\n", pairing_active()); }
+    if (c == 'p') { if (pairing_active()) pairing_stop(); else pairing_start(settings_pair_ms()); USBSerial.printf("pairing=%d\n", pairing_active()); }
     else if (c == 'f') { pairing_clear(); USBSerial.println("forgot all controllers"); }
     else if (c == 'v') { for (int i = 0; i < MAX_PADS; i++) gip_rumble(i, 70, 70, 0, 0); rumbleOff = millis() + 700; USBSerial.println("rumble on"); }
     else if (c == 'l') { static uint8_t m = 0; const uint8_t modes[] = {0, 1, 2, 3, 4, 8, 9, 1}; m = (m + 1) % sizeof(modes); for (int i = 0; i < MAX_PADS; i++) gip_led(i, modes[m], 20); USBSerial.printf("led mode %u\n", modes[m]); }

@@ -17,6 +17,9 @@
 #include "config.h"
 #ifdef XINPUT_MODE
 #include "hid.h"
+#include "settings.h"
+#include "evlog.h"
+#include <math.h>
 #include "gip.h"
 #include <Preferences.h>
 #include "pairing.h"
@@ -171,6 +174,17 @@ static void remap() {
   for (int k = 0; k < XI_MAX_IF; k++) ifToSlot[k] = k < n ? order[k] : -1;
 }
 
+// radial stick deadzone: |v| below the threshold reads as centre, the rest is rescaled so full deflection stays full
+static void deadzone(int16_t &x, int16_t &y, int pct) {
+  if (pct <= 0) return;
+  float fx = x, fy = y, m = sqrtf(fx * fx + fy * fy), t = 32768.0f * pct / 100.0f;
+  if (m <= t) { x = 0; y = 0; return; }
+  float k = (m - t) / (32768.0f - t) * 32768.0f / m;
+  fx *= k; fy *= k;
+  x = (int16_t)(fx > 32767 ? 32767 : fx < -32768 ? -32768 : fx);
+  y = (int16_t)(fy > 32767 ? 32767 : fy < -32768 ? -32768 : fy);
+}
+
 static void build(uint8_t *r, const Pad &p) {
   memset(r, 0, 20);
   r[1] = 0x14;
@@ -198,6 +212,8 @@ static void build(uint8_t *r, const Pad &p) {
   r[5] = (in.rt > 1023 ? 1023 : in.rt) >> 2;
   // GIP and XInput both use "up = positive" on Y; PadInput stores Y inverted for HID, so undo that here.
   int16_t v[4] = {in.lx, (int16_t)~in.ly, in.rx, (int16_t)~in.ry};
+  deadzone(v[0], v[1], cfg.deadzone * 5);
+  deadzone(v[2], v[3], cfg.deadzone * 5);
   for (int i = 0; i < 4; i++) { r[6 + 2 * i] = v[i] & 0xff; r[7 + 2 * i] = (v[i] >> 8) & 0xff; }
 }
 
@@ -213,6 +229,7 @@ static volatile int styleRequest = -1;   // set from the UI task, consumed by hi
 
 // Step 1: unplug. The descriptors are only rebuilt after the pause, so the host can never read half-new data.
 static void applyLayout(int newCount, int newStyle) {
+  evlog_add(newCount ? "USB re-plug: %d pad%s" : "USB unplugged: no pads", newCount, newCount == 1 ? "" : "s");
   pendCount = newCount;
   pendStyle = newStyle;
   for (int i = 0; i < XI_MAX_IF; i++) { opened[i] = false; lastValid[i] = false; }

@@ -3,12 +3,7 @@
 #include <string.h>
 #include <math.h>
 
-static void wipe2(G &g, const Snap &s, const Nav &n) {
-  uint32_t dt = s.nowMs - n.screenSinceMs;
-  if (dt > 260) return;
-  int x = dt * 340 / 260 - 10;
-  for (int i = 0; i < 6; i++) g.rect(x - i * 6, SB_H + 1, 3, FOOT_Y - SB_H - 4, mix(T.bg, T.accent, 200 - i * 36));
-}
+static void wipe2(G &, const Snap &, const Nav &) {}   // screen transitions are applied after drawing (ui_render)
 
 static void stat(G &g, int x, int y, const char *label, const char *val, col_t vk) {
   g.text(x, y, label, T.dim, FONT_S);
@@ -122,39 +117,71 @@ void scr_power(G &g, const Snap &s, const Nav &n) {
 static const char *kBright[5] = {"20%", "40%", "60%", "80%", "100%"};
 static const char *kLed[4] = {"Off", "Low", "Medium", "High"};
 static const char *kAccent[4] = {"Green", "Blue", "Purple", "Orange"};
+static const char *kDim[4] = {"Never", "30 sec", "1 min", "5 min"};
+static const char *kFx[3] = {"Amber", "Breathe", "Rainbow"};
+static const char *kPairWin[4] = {"30 sec", "1 min", "2 min", "5 min"};
+
+static const char *kLabels[SETTINGS_ROWS] = {
+  "Brightness", "Auto-dim", "Auto-sleep", "Accent colour", "LED ring", "Ring idle effect", "Flip screen", "Knob direction",
+  "USB mode", "Stick deadzone", "Xbox button wakes PC", "Pairing window", "Pair on power-up", "Reset settings",
+  "Forget all controllers", "Bootloader mode", "About"};
+
+static const char *kHints[SETTINGS_ROWS] = {
+  "screen backlight", "dim the screen when idle", "deep sleep after this long with no controller", "colour of the interface",
+  "brightness of the 8 LEDs", "what the ring does with no controller", "rotate the screen 180 degrees", "reverse the turn direction",
+  "Wired 360 pad: most games.  360 receiver: dongle", "ignore small stick drift (applies on the PC)",
+  "Xbox button wakes a sleeping computer", "how long pairing stays open", "open pairing every time it powers on",
+  "back to factory settings", "unpair every controller", "reboot into the USB flasher", "version, memory, reset info"};
+
+const char *settingsHint(int row) { return row >= 0 && row < SETTINGS_ROWS ? kHints[row] : ""; }
+int settingsDanger(int row) { return row == 13 || row == 14 || row == 15; }
 
 void settingsValue(const Snap &s, int row, char *out, size_t n) {
   switch (row) {
     case 0: snprintf(out, n, "%s", kBright[s.brightness % 5]); break;
-    case 1: snprintf(out, n, "%s", kLed[s.ledLevel % 4]); break;
-    case 2: snprintf(out, n, "%s", kAccent[s.accent % 4]); break;
-    case 3: if (s.sleepMin) snprintf(out, n, "%u min", s.sleepMin); else snprintf(out, n, "Off"); break;
-    case 4: snprintf(out, n, "Style %c", 'A' + s.style); break;
-    case 5: snprintf(out, n, "%s", s.reverseKnob ? "Reversed" : "Normal"); break;
+    case 1: snprintf(out, n, "%s", kDim[s.autoDim % 4]); break;
+    case 2: if (s.sleepMin) snprintf(out, n, "%u min", s.sleepMin); else snprintf(out, n, "Off"); break;
+    case 3: snprintf(out, n, "%s", kAccent[s.accent % 4]); break;
+    case 4: snprintf(out, n, "%s", kLed[s.ledLevel % 4]); break;
+    case 5: snprintf(out, n, "%s", kFx[s.ringFx % 3]); break;
+    case 6: snprintf(out, n, "%s", s.flip ? "Flipped" : "Normal"); break;
+    case 7: snprintf(out, n, "%s", s.reverseKnob ? "Reversed" : "Normal"); break;
+    case 8: snprintf(out, n, "%s", usbModeName(s.style)); break;
+    case 9: if (s.deadzone) snprintf(out, n, "%u%%", s.deadzone * 5); else snprintf(out, n, "None"); break;
+    case 10: snprintf(out, n, "%s", s.wakePc ? "On" : "Off"); break;
+    case 11: snprintf(out, n, "%s", kPairWin[s.pairWin % 4]); break;
+    case 12: snprintf(out, n, "%s", s.pairBoot ? "On" : "Off"); break;
     default: out[0] = 0; break;
   }
 }
 
 void scr_settings(G &g, const Snap &s, const Nav &n) {
   g.rect(0, 0, 320, 170, T.bg);
-  static const char *labels[9] = {"Brightness", "LED ring", "Accent colour", "Auto-sleep", "USB style", "Knob direction", "Forget all controllers", "Bootloader mode", "About"};
   int off = (int)lroundf(n.scrollAnim * 24);
-  for (int r = 0; r < 9; r++) {
+  uint32_t dt = s.nowMs - n.screenSinceMs;
+  for (int r = 0; r < SETTINGS_ROWS; r++) {
     int y = SB_H + 5 + r * 24 - off;
     if (y < SB_H - 20 || y > FOOT_Y - 6) continue;
     bool sel = n.sel == r;
-    bool danger = r == 6 || r == 7;
-    card(g, 8, y, 304, 21, sel, 0);
-    if (sel) g.rrect(8, y, 5, 21, 2, danger ? T.bad : T.accent);
-    g.text(22, y + 15, labels[r], sel ? T.text : T.dim, FONT_M);
-    char v[16];
+    bool danger = settingsDanger(r);
+    int dx = 0;                                   // rows glide in from the right when the screen opens
+    int rowDelay = (r > 6 ? 6 : r) * 30;
+    if (dt < 300 + (unsigned)rowDelay) { int d = (int)dt - rowDelay; if (d < 0) d = 0; float e = d / 300.0f; if (e > 1) e = 1; float q = 1 - e; dx = (int)(q * q * q * 120); }
+    card(g, 8 + dx, y, 304, 21, sel, 0);
+    if (sel) g.rrect(8 + dx, y, 5, 21, 2, danger ? T.bad : T.accent);
+    g.text(22 + dx, y + 15, kLabels[r], sel ? T.text : T.dim, FONT_M);
+    char v[20];
     settingsValue(s, r, v, sizeof(v));
-    if (r == 2) g.disc(294, y + 10, 6, s.accent == 0 ? rgb(34, 214, 92) : s.accent == 1 ? rgb(72, 152, 255) : s.accent == 2 ? rgb(168, 112, 255) : rgb(255, 148, 40));
-    else if (v[0]) g.textR(302, y + 15, v, sel ? T.accent : T.dim, FONT_B);
-    else if (sel && danger) g.textR(302, y + 15, n.confirm ? "click again!" : "click", T.bad, FONT_B);
-    else if (r == 8) g.textR(302, y + 15, ">", T.dim, FONT_B);
+    if (r == 3) g.disc(294 + dx, y + 10, 6, s.accent == 0 ? rgb(34, 214, 92) : s.accent == 1 ? rgb(72, 152, 255) : s.accent == 2 ? rgb(168, 112, 255) : rgb(255, 148, 40));
+    else if (v[0]) g.textR(302 + dx, y + 15, v, sel ? T.accent : T.dim, FONT_B);
+    else if (sel && danger) g.textR(302 + dx, y + 15, n.confirm ? "click again!" : "click", T.bad, FONT_B);
+    else if (r == 16) g.textR(302 + dx, y + 15, ">", T.dim, FONT_B);
   }
-  ui_chrome(g, s, n, "Settings", "turn: move   click: change   key: back", true);
+  ui_chrome(g, s, n, "Settings", settingsHint(n.sel), true);
+  // scroll bar
+  int th = 120 * 5 / SETTINGS_ROWS, ty = SB_H + 5 + (120 - th) * n.sel / (SETTINGS_ROWS - 1);
+  g.rrect(315, SB_H + 5, 2, 120, 1, T.border);
+  g.rrect(315, ty, 2, th, 1, T.accent);
   wipe2(g, s, n);
 }
 
@@ -177,7 +204,7 @@ void scr_about(G &g, const Snap &s, const Nav &n) {
   stat(g, 20, 92, "UPTIME", b, T.text);
   snprintf(b, sizeof(b), "%luk / %luk", (unsigned long)(s.perf.heapFree / 1024), (unsigned long)(s.perf.heapMin / 1024));
   stat(g, 170, 92, "MEMORY free / low", b, T.text);
-  snprintf(b, sizeof(b), "%d  (style %c)", s.gamepads, 'A' + s.style);
+  snprintf(b, sizeof(b), "%d  %s", s.gamepads, usbModeName(s.style));
   stat(g, 20, 122, "XBOX PADS ON USB", b, T.text);
   snprintf(b, sizeof(b), "%d paired", s.nKnown);
   stat(g, 170, 122, "CONTROLLERS", b, T.text);

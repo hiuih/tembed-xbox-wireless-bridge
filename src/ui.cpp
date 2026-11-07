@@ -20,6 +20,7 @@
 #include "power.h"
 #include "bootguard.h"
 #include "radio.h"
+#include "evlog.h"
 
 #define BAND_H 85
 #define FRAME_MS 50
@@ -52,11 +53,13 @@ void ui_pump() {
       case C_DISC: gip_disconnect(c.slot); break;
       case C_FORGET_ONE: pairing_remove(c.mac); if (c.slot >= 0) gip_disconnect(c.slot); break;
       case C_FORGET_ALL: for (int i = 0; i < MAX_PADS; i++) gip_disconnect(i); pairing_clear(); break;
-      case C_PAIR_TOGGLE: if (pairing_active()) pairing_stop(); else pairing_start(); break;
+      case C_PAIR_TOGGLE: if (pairing_active()) pairing_stop(); else pairing_start(settings_pair_ms()); break;
     }
   }
 }
 static uint32_t lastPower = 0;
+static Screen prevScreen = SC_HOME;
+static_assert(EVLOG_N == UI_LOG_N && EVLOG_LEN == UI_LOG_LEN, "event log sizes must match the UI snapshot");
 
 // ---------------------------------------------------------------- helpers
 static const char *padName(uint16_t pid) {
@@ -76,9 +79,10 @@ static void toast(const char *m) {
 }
 
 static void goTo(Screen sc, int sel = 0) {
+  prevScreen = nav.screen;
   nav.screen = sc; nav.sel = sel; nav.scroll = 0; nav.scrollAnim = 0; nav.confirm = false;
   nav.screenSinceMs = millis();
-  if (sc == SC_HOME) { nav.selX = 8 + (sel % 3) * 104; nav.selY = 28 + (sel / 3) * 64; }
+  if (sc == SC_HOME) { nav.selX = 8 + (sel % 3) * 104; nav.selY = 28 + (sel / 3) * 64; nav.scrollAnim = (sel / 3) > 1 ? (sel / 3) - 1 : 0; }
 }
 
 static void setBacklight(uint8_t idx) {
@@ -87,6 +91,7 @@ static void setBacklight(uint8_t idx) {
 }
 
 // ---------------------------------------------------------------- live data
+static void trackEvents();
 static void fillSnap() {
   uint32_t now = millis();
   snap.nowMs = now;
@@ -109,7 +114,11 @@ static void fillSnap() {
   if (snap.nrfOk) { memcpy(snap.spec, nrf24_occupancy(), 84); memcpy(snap.peak, nrf24_peak(), 84); }
   snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
   snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
-  snap.fwVersion = "0.5";
+  snap.fwVersion = "0.7";
+  snap.autoDim = cfg.autoDim; snap.ringFx = cfg.ringFx; snap.deadzone = cfg.deadzone; snap.pairWin = cfg.pairWin;
+  snap.flip = cfg.flip; snap.wakePc = cfg.wakePc; snap.pairBoot = cfg.pairBoot; snap.pairTotalMs = settings_pair_ms();
+  snap.logN = evlog_copy(snap.logMsg, snap.logAtS);
+  trackEvents();
   snap.sleepWhy = powerbtn_last_sleep(); snap.pmicFault = power_fault(); snap.resetReason = boot_reason(); snap.prevMark = boot_prev_mark(); snap.prevUiMark = boot_prev_ui_mark();
   snap.uiStackFree = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
 
@@ -134,11 +143,23 @@ static void fillSnap() {
     v.rssi = p.rssi;
     v.battKnown = p.battKnown; v.battType = p.battType; v.battLevel = p.battLevel;
     v.in = p.in;
+    memcpy(v.gap, p.inHist, sizeof(v.gap)); v.gipSeen = p.gipSeen; v.gipMissed = p.inputGaps;
     v.rateHz = stats_pad_rate(liveSlot[k]);
     uint32_t tot = p.inputGaps + p.gipSeen;
     v.lossPermille = tot ? (uint16_t)(p.inputGaps * 1000UL / tot) : 0;
     v.upS = (now - p.connectedAt) / 1000;
   }
+}
+
+// Turns state changes into event-log lines.
+static void trackEvents() {
+  static bool first = true, pairing = false, mounted = false, suspended = false;
+  static int gamepads = -1;
+  if (first) { first = false; pairing = snap.pairing; mounted = snap.usbMounted; suspended = snap.usbSuspended; gamepads = snap.gamepads; return; }
+  if (snap.pairing != pairing) { pairing = snap.pairing; evlog_add(pairing ? "!Pairing opened" : "Pairing closed"); }
+  if (snap.usbMounted != mounted) { mounted = snap.usbMounted; if (snap.gamepads > 0) evlog_add(mounted ? "+USB connected" : "-USB unplugged"); }
+  if (snap.usbSuspended != suspended) { suspended = snap.usbSuspended; evlog_add(suspended ? "!Computer asleep" : "Computer awake"); }
+  if (snap.gamepads != gamepads) { gamepads = snap.gamepads; evlog_add("USB: %d pad%s emulated", gamepads, gamepads == 1 ? "" : "s"); }
 }
 
 static void updateTrails() {
@@ -172,18 +193,33 @@ static void forgetAll() {
   toast("All controllers forgotten");
 }
 
+static void applyAllSettings() {
+  setBacklight(cfg.brightness); theme_set(cfg.accent); leds_set_level(cfg.ledLevel); leds_set_idle_fx(cfg.ringFx);
+  encoder_set_reverse(cfg.reverseKnob); tft.setRotation(cfg.flip ? 3 : 1);
+}
+
 static void settingsClick() {
+  static const uint8_t sleepOpts[4] = {0, 5, 15, 30};
   switch (nav.sel) {
-    case 0: cfg.brightness = (cfg.brightness + 1) % 5; setBacklight(cfg.brightness); settings_save(); break;
-    case 1: cfg.ledLevel = (cfg.ledLevel + 1) % 4; leds_set_level(cfg.ledLevel); settings_save(); break;
-    case 2: cfg.accent = (cfg.accent + 1) % 4; theme_set(cfg.accent); settings_save(); break;
-    case 3: { static const uint8_t opts[4] = {0, 5, 15, 30}; int i = 0; for (; i < 4; i++) if (opts[i] == cfg.sleepMin) break; cfg.sleepMin = opts[(i + 1) % 4]; settings_save(); break; }
-    case 4: xinput_set_style(1 - xinput_style()); toast("USB re-plugging..."); break;
-    case 5: cfg.reverseKnob = !cfg.reverseKnob; encoder_set_reverse(cfg.reverseKnob); settings_save(); break;
-    case 6: if (nav.confirm) { forgetAll(); nav.confirm = false; } else { nav.confirm = true; } break;
-    case 7: if (nav.confirm) { toast("Bootloader..."); delay(500); boot_to_download(); } else { nav.confirm = true; } break;
-    case 8: goTo(SC_ABOUT); break;
+    case 0: cfg.brightness = (cfg.brightness + 1) % 5; setBacklight(cfg.brightness); break;
+    case 1: cfg.autoDim = (cfg.autoDim + 1) % 4; break;
+    case 2: { int i = 0; for (; i < 4; i++) if (sleepOpts[i] == cfg.sleepMin) break; cfg.sleepMin = sleepOpts[(i + 1) % 4]; break; }
+    case 3: cfg.accent = (cfg.accent + 1) % 4; theme_set(cfg.accent); break;
+    case 4: cfg.ledLevel = (cfg.ledLevel + 1) % 4; leds_set_level(cfg.ledLevel); break;
+    case 5: cfg.ringFx = (cfg.ringFx + 1) % 3; leds_set_idle_fx(cfg.ringFx); break;
+    case 6: cfg.flip = !cfg.flip; tft.setRotation(cfg.flip ? 3 : 1); break;
+    case 7: cfg.reverseKnob = !cfg.reverseKnob; encoder_set_reverse(cfg.reverseKnob); break;
+    case 8: xinput_set_style(1 - xinput_style()); { char m[40]; snprintf(m, sizeof(m), "USB: %s", usbModeName(1 - snap.style)); toast(m); } evlog_add("USB mode: %s", usbModeName(1 - snap.style)); return;
+    case 9: cfg.deadzone = (cfg.deadzone + 1) % 6; break;
+    case 10: cfg.wakePc = !cfg.wakePc; break;
+    case 11: cfg.pairWin = (cfg.pairWin + 1) % 4; break;
+    case 12: cfg.pairBoot = !cfg.pairBoot; break;
+    case 13: if (nav.confirm) { settings_reset(); applyAllSettings(); nav.confirm = false; toast("Settings reset"); } else nav.confirm = true; return;
+    case 14: if (nav.confirm) { forgetAll(); nav.confirm = false; evlog_add("-All controllers forgotten"); } else nav.confirm = true; return;
+    case 15: if (nav.confirm) { toast("Bootloader..."); delay(500); boot_to_download(); } else nav.confirm = true; return;
+    case 16: goTo(SC_ABOUT); return;
   }
+  settings_save();
 }
 
 static void padAction() {
@@ -208,16 +244,16 @@ static void handleInput() {
   if (back) {
     switch (nav.screen) {
       case SC_PAD: goTo(SC_PADS); break;
-      case SC_ABOUT: goTo(SC_SETTINGS, 8); break;
+      case SC_ABOUT: if (prevScreen == SC_SETTINGS) goTo(SC_SETTINGS, 16); else { goTo(SC_HOME); nav.sel = ui_home_index(SC_ABOUT); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; } break;
       case SC_HOME: break;
-      default: { int from = nav.screen; goTo(SC_HOME); nav.sel = from == SC_PADS ? 0 : from == SC_PAIR ? 1 : from == SC_RADIO ? 2 : from == SC_SPECTRUM ? 3 : from == SC_POWER ? 4 : 5; nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; }
+      default: { int from = nav.screen; goTo(SC_HOME); nav.sel = ui_home_index((Screen)from); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; }
     }
     return;
   }
   switch (nav.screen) {
     case SC_HOME:
-      moveSel(steps, 6);
-      if (click) { static const Screen tgt[6] = {SC_PADS, SC_PAIR, SC_RADIO, SC_SPECTRUM, SC_POWER, SC_SETTINGS}; goTo(tgt[nav.sel]); }
+      moveSel(steps, HOME_TILES);
+      if (click) goTo(ui_home_screen(nav.sel));
       break;
     case SC_PADS: {
       int rows = padRows() + 1;
@@ -231,7 +267,9 @@ static void handleInput() {
     case SC_PAD: if (steps) nav.confirm = false; moveSel(steps, 4); if (click) padAction(); break;
     case SC_PAIR: if (click) post(C_PAIR_TOGGLE); break;
     case SC_POWER: if (click) powerbtn_sleep_now(); break;
-    case SC_SETTINGS: if (steps) nav.confirm = false; moveSel(steps, 9); if (click) settingsClick(); break;
+    case SC_SETTINGS: if (steps) nav.confirm = false; moveSel(steps, SETTINGS_ROWS); if (click) settingsClick(); break;
+    case SC_LAG: { int c = 0; for (int i = 0; i < MAX_PADS; i++) if (snap.pad[i].present && snap.pad[i].online) c++; moveSel(steps, c > 0 ? c : 1); break; }
+    case SC_LOG: moveSel(steps, snap.logN > 0 ? snap.logN : 1); break;
     default: break;
   }
 }
@@ -239,6 +277,7 @@ static void handleInput() {
 static void animate() {
   nav.selX += ((8 + (nav.sel % 3) * 104) - nav.selX) * 0.4f;
   nav.selY += ((28 + (nav.sel / 3) * 64) - nav.selY) * 0.4f;
+  if (nav.screen == SC_HOME) { float tg = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; nav.scrollAnim += (tg - nav.scrollAnim) * 0.35f; return; }
   float target = 0;
   if (nav.screen == SC_PADS) { int rows = padRows() + 1; target = nav.sel > 2 ? nav.sel - 2 : 0; if (rows <= 3) target = 0; }
   if (nav.screen == SC_SETTINGS) target = nav.sel > 4 ? nav.sel - 4 : 0;
@@ -263,7 +302,7 @@ static void uiTask(void *) {
     if (snap.nReady > 0) lastActivity = t0;
     // idle: dim after a minute, sleep after the configured time with no controller
     if (cfg.sleepMin && t0 - lastActivity > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) powerbtn_sleep_now(SLEEP_AUTO);
-    setBacklight(t0 - lastActivity > 60000UL && snap.nReady == 0 ? 0 : cfg.brightness);
+    { uint32_t dim = settings_dim_ms(); setBacklight(dim && t0 - lastActivity > dim && snap.nReady == 0 ? 0 : cfg.brightness); }
     animate();
     boot_ui_mark(2);
 
@@ -295,8 +334,11 @@ void ui_begin() {
   SPI.begin(PIN_SPI_SCK, PIN_SPI_MISO, PIN_SPI_MOSI, -1);
   tft.init(170, 320);
   tft.setSPISpeed(40000000);
-  tft.setRotation(1);
+  tft.setRotation(cfg.flip ? 3 : 1);
   tft.fillScreen(0);
+  leds_set_idle_fx(cfg.ringFx);
+  evlog_add("boot: %s", boot_reason());
+  if (cfg.pairBoot) pairing_start(settings_pair_ms());
   nrf24_begin();
   band = new GFXcanvas16(320, BAND_H);
   esp_read_mac(snap.mac, ESP_MAC_WIFI_STA);

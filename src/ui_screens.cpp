@@ -4,7 +4,7 @@
 #include <math.h>
 
 const char *ui_screen_title(Screen sc) {
-  static const char *t[SC_COUNT] = {"Xbox Bridge", "Xbox Bridge", "Controllers", "Controller", "Pair", "Radio", "Spectrum", "Power", "Settings", "About"};
+  static const char *t[SC_COUNT] = {"Xbox Bridge", "Xbox Bridge", "Controllers", "Controller", "Pair", "Radio", "Spectrum", "Power", "Settings", "About", "Latency", "Event log"};
   return t[sc];
 }
 
@@ -13,6 +13,10 @@ void ui_chrome(G &g, const Snap &s, const Nav &n, const char *title, const char 
   if (!overlay) g.rect(0, 0, 320, 170, T.bg);
   vgrad(g, 0, 0, 320, SB_H, mix(T.bg, T.accentDim, 230), T.bg);
   g.hline(0, SB_H, 320, mix(T.bg, T.accent, 70));
+  { // a bright comet runs along the header line
+    int hx = (int)((s.nowMs / 5) % 560) - 120;
+    for (int i = 0; i < 36; i++) g.hline(hx - i * 2, SB_H, 2, mix(T.bg, T.accent, 255 - i * 6));
+  }
   g.rrect(8, 6, 4, 11, 2, T.accent);
   g.text(18, 17, title, T.text, FONT_B);
 
@@ -38,17 +42,41 @@ void ui_footer(G &g, const char *hint, bool clear) {
 }
 
 void ui_draw_toast(G &g, const Nav &n, uint32_t now) {
-  if ((int32_t)(n.toastUntilMs - now) <= 0) return;
+  int32_t left = (int32_t)(n.toastUntilMs - now);
+  if (left <= 0) return;
+  int32_t age = 1800 - left;
+  float k = 0;
+  if (age < 240) { float q = 1 - age / 240.0f; k = q * q; }          // pops up from below
+  else if (left < 240) { float q = 1 - left / 240.0f; k = q * q; }   // and sinks away
+  int dy = (int)(k * 40);
   int w = g.textW(n.toast, FONT_B) + 28;
-  g.rrect(160 - w / 2, 116, w, 26, 13, T.accent);
-  g.textC(160, 134, n.toast, T.bg, FONT_B);
+  g.rrect(160 - w / 2 - 1, 115 + dy, w + 2, 28, 14, mix(T.bg, T.accent, 110));
+  g.rrect(160 - w / 2, 116 + dy, w, 26, 13, T.accent);
+  g.textC(160, 134 + dy, n.toast, T.bg, FONT_B);
 }
 
-static void wipe(G &g, const Snap &s, const Nav &n) {
+static void wipe(G &, const Snap &, const Nav &) {}   // screen transitions are applied after drawing (ui_render)
+
+// Screen transition, applied to the finished frame: the content slides in from the right while fading up from
+// the background, with a bright accent edge leading it. Header and footer stay put.
+static void postTransition(G &g, const Snap &s, const Nav &n) {
   uint32_t dt = s.nowMs - n.screenSinceMs;
-  if (dt > 260) return;
-  int x = dt * 340 / 260 - 10;
-  for (int i = 0; i < 6; i++) g.rect(x - i * 6, SB_H + 1, 3, FOOT_Y - SB_H - 4, mix(T.bg, T.accent, 200 - i * 36));
+  const uint32_t D = 380;
+  if (dt >= D || n.screen == SC_SPLASH || n.screen == SC_HOME || n.screen == SC_SETTINGS || n.screen == SC_LOG) return;   // home has its own tile animation
+  float t = dt / (float)D, q = 1 - t;
+  float e = 1 - q * q * q;
+  int shift = (int)((1 - e) * 96);
+  uint8_t fade = (uint8_t)((1 - e) * 210);
+  uint16_t *buf = g.c->getBuffer();
+  int rows = g.c->height();
+  for (int r = 0; r < rows; r++) {
+    int gy = g.oy + r;
+    if (gy <= SB_H || gy >= FOOT_Y - 2) continue;
+    uint16_t *row = buf + r * 320;
+    if (shift > 0) { memmove(row + shift, row, (320 - shift) * 2); for (int x = 0; x < shift; x++) row[x] = T.bg; }
+    if (fade) for (int x = shift; x < 320; x++) row[x] = mix(row[x], T.bg, fade);
+    if (shift > 1) { row[shift] = mix(T.bg, T.accent, 255); row[shift - 1] = mix(T.bg, T.accent, 160); if (shift > 2) row[shift - 2] = mix(T.bg, T.accent, 70); }
+  }
 }
 
 // ---------------------------------------------------------------- splash
@@ -59,51 +87,95 @@ void scr_splash(G &g, const Snap &s, const Nav &n) {
   int cy = 66 + (int)((1.0f - e) * 12);
   // glow rings
   for (int i = 3; i >= 0; i--) g.ring(160, cy, 34 + i * 7, mix(T.bg, T.accent, (uint8_t)(e * (80 - i * 18))));
+  for (int w = 0; w < 3; w++) {   // shockwaves
+    int rr = ((int)t - 150 - w * 170) / 4;
+    if (rr > 0 && rr < 170) { g.ring(160, cy, rr, mix(T.bg, T.accent, (uint8_t)(190 - rr))); g.ring(160, cy, rr + 1, mix(T.bg, T.accent, (uint8_t)((190 - rr) / 2))); }
+  }
   g.disc(160, cy, 30, T.accentDim);
   icoGamepad(g, 160, cy, mix(T.bg, T.accent, (uint8_t)(100 + e * 155)));
-  g.textC(160, 128, "BRIDGE", mix(T.bg, T.text, (uint8_t)(e * 255)), FONT_XL);
+  { // letters drop in one by one
+    const char *word = "BRIDGE";
+    int full = g.textW(word, FONT_XL), x = 160 - full / 2;
+    for (int i = 0; i < 6; i++) {
+      int d = (int)t - 250 - i * 90;
+      if (d <= 0) continue;
+      float a = d > 220 ? 1.0f : d / 220.0f;
+      char ch[2] = {word[i], 0};
+      int w = g.textW(ch, FONT_XL);
+      g.text(x, 128 - (int)((1 - a) * (1 - a) * 22), ch, mix(T.bg, T.text, (uint8_t)(a * 255)), FONT_XL);
+      x += g.textW(word, FONT_XL) * 0 + w;
+    }
+  }
   g.textC(160, 146, "xbox wireless  >  usb", mix(T.bg, T.dim, (uint8_t)(e * 255)), FONT_M);
   bar(g, 100, 158, 120, 4, e, T.accent, T.border);
 }
 
 // ---------------------------------------------------------------- home
 struct Tile { const char *name; Screen sc; };
-static const Tile kTiles[6] = {
-  {"Controllers", SC_PADS}, {"Pair", SC_PAIR}, {"Radio", SC_RADIO}, {"Spectrum", SC_SPECTRUM}, {"Power", SC_POWER}, {"Settings", SC_SETTINGS}};
+static const Tile kTiles[HOME_TILES] = {
+  {"Controllers", SC_PADS}, {"Pair", SC_PAIR}, {"Radio", SC_RADIO}, {"Spectrum", SC_SPECTRUM}, {"Latency", SC_LAG},
+  {"Log", SC_LOG}, {"Power", SC_POWER}, {"Settings", SC_SETTINGS}, {"About", SC_ABOUT}};
+Screen ui_home_screen(int i) { return kTiles[i % HOME_TILES].sc; }
+int ui_home_index(Screen sc) { for (int i = 0; i < HOME_TILES; i++) if (kTiles[i].sc == sc) return i; return 0; }
 
 static void tileIcon(G &g, int i, int cx, int cy, col_t k, col_t hole) {
-  switch (i) {
-    case 0: icoGamepad(g, cx, cy, k, hole); break;
-    case 1: icoPair(g, cx, cy, k, hole); break;
-    case 2: icoRadio(g, cx, cy, k, hole); break;
-    case 3: icoSpectrum(g, cx, cy, k, hole); break;
-    case 4: icoPower(g, cx, cy, k, hole); break;
+  switch (kTiles[i].sc) {
+    case SC_PADS: icoGamepad(g, cx, cy, k, hole); break;
+    case SC_PAIR: icoPair(g, cx, cy, k, hole); break;
+    case SC_RADIO: icoRadio(g, cx, cy, k, hole); break;
+    case SC_SPECTRUM: icoSpectrum(g, cx, cy, k, hole); break;
+    case SC_LAG: icoPulse(g, cx, cy, k, hole); break;
+    case SC_LOG: icoList(g, cx, cy, k, hole); break;
+    case SC_POWER: icoPower(g, cx, cy, k, hole); break;
+    case SC_ABOUT: icoInfo(g, cx, cy, k, hole); break;
     default: icoGear(g, cx, cy, k, hole); break;
   }
 }
 
 void scr_home(G &g, const Snap &s, const Nav &n) {
-  ui_chrome(g, s, n, "Xbox Bridge", "turn: move    click: open    hold: pair    key: sleep");
-  char sub[24];
-  for (int i = 0; i < 6; i++) {
-    int x = 8 + (i % 3) * 104, y = 28 + (i / 3) * 64;
+  g.rect(0, 0, 320, 170, T.bg);
+  int off = (int)lroundf(n.scrollAnim * 64);
+  char sub[28];
+  for (int i = 0; i < HOME_TILES; i++) {
+    int x = 8 + (i % 3) * 104, y = 28 + (i / 3) * 64 - off;
+    { // tiles pop in one after another when the screen opens
+      int d = (int)(s.nowMs - n.screenSinceMs) - i * 45;
+      if (d < 0) continue;
+      if (d < 300) { float q = 1 - d / 300.0f; y += (int)(q * q * 30); }
+    }
+    if (y < SB_H - 52 || y > FOOT_Y) continue;
     bool sel = (n.sel == i);
+    int bob = sel ? (int)lroundf(2.0f * sinf(s.nowMs / 170.0f)) : 0;
     card(g, x, y, 96, 58, sel);
-    tileIcon(g, i, x + 48, y + 16, sel ? T.accent : mix(T.dim, T.text, 90), sel ? T.cardHi : T.card);
+    tileIcon(g, i, x + 48, y + 16 + bob, sel ? T.accent : mix(T.dim, T.text, 90), sel ? T.cardHi : T.card);
     g.textC(x + 48, y + 43, kTiles[i].name, sel ? T.text : mix(T.dim, T.text, 150), FONT_M);
-    switch (i) {
-      case 0: snprintf(sub, sizeof(sub), "%d online", s.nReady); break;
-      case 1: if (s.pairing) snprintf(sub, sizeof(sub), "open %us", (unsigned)(s.pairLeftMs / 1000)); else snprintf(sub, sizeof(sub), "%d paired", s.nKnown); break;
-      case 2: snprintf(sub, sizeof(sub), "ch %u  %lu drop", s.channel, (unsigned long)s.perf.queueDrops); break;
-      case 3: snprintf(sub, sizeof(sub), "%s", s.nrfOk ? "nRF24 ready" : "no nRF24"); break;
-      case 4: if (s.pmicOk) snprintf(sub, sizeof(sub), "%d%% %s", s.battPct, s.charging ? "charging" : "battery"); else snprintf(sub, sizeof(sub), "no gauge"); break;
-      default: snprintf(sub, sizeof(sub), "USB style %c", 'A' + s.style); break;
+    unsigned worst = 0;
+    switch (kTiles[i].sc) {
+      case SC_PADS: snprintf(sub, sizeof(sub), "%d online", s.nReady); break;
+      case SC_PAIR: if (s.pairing) snprintf(sub, sizeof(sub), "open %us", (unsigned)(s.pairLeftMs / 1000)); else snprintf(sub, sizeof(sub), "%d paired", s.nKnown); break;
+      case SC_RADIO: snprintf(sub, sizeof(sub), "ch %u  %lu drop", s.channel, (unsigned long)s.perf.queueDrops); break;
+      case SC_SPECTRUM: snprintf(sub, sizeof(sub), "%s", s.nrfOk ? "nRF24 ready" : "no nRF24"); break;
+      case SC_LAG:
+        for (int k = 0; k < MAX_PADS; k++) if (s.pad[k].online) worst = s.pad[k].lossPermille > worst ? s.pad[k].lossPermille : worst;
+        if (s.nReady) snprintf(sub, sizeof(sub), "loss %u.%u%%", worst / 10, worst % 10); else snprintf(sub, sizeof(sub), "no pad");
+        break;
+      case SC_LOG: snprintf(sub, sizeof(sub), "%d events", s.logN); break;
+      case SC_POWER: if (s.pmicOk) snprintf(sub, sizeof(sub), "%d%% %s", s.battPct, s.charging ? "charging" : "battery"); else snprintf(sub, sizeof(sub), "no gauge"); break;
+      case SC_SETTINGS: snprintf(sub, sizeof(sub), "%s", usbModeName(s.style)); break;
+      default: snprintf(sub, sizeof(sub), "fw %s", s.fwVersion ? s.fwVersion : "dev"); break;
     }
     g.textC(x + 48, y + 49, sub, T.dim, FONT_S);
   }
   // animated selector outline slides between tiles
-  int sx = (int)n.selX, sy = (int)n.selY;
-  g.rframe(sx - 2, sy - 2, 100, 62, 9, mix(T.bg, T.accent, 90));
+  int sx = (int)n.selX, sy = (int)n.selY - off;
+  { int d = (int)(s.nowMs - n.screenSinceMs) - n.sel * 45; if (d < 0) sy += 40; else if (d < 300) { float q = 1 - d / 300.0f; sy += (int)(q * q * 30); } }
+  { int pl = 110 + (int)(70 * sinf(s.nowMs / 140.0f));
+    g.rframe(sx - 3, sy - 3, 102, 64, 10, mix(T.bg, T.accent, (uint8_t)(pl / 2)));
+    g.rframe(sx - 2, sy - 2, 100, 62, 9, mix(T.bg, T.accent, (uint8_t)pl)); }
+  ui_chrome(g, s, n, "Xbox Bridge", "turn: move    click: open    hold: pair    key: sleep", true);
+  // page dots
+  int pages = (HOME_TILES + 5) / 6;
+  for (int p = 0; p < pages; p++) g.disc(314, 70 + p * 8, 2, (n.scrollAnim > 0.5f) == (p == 1) ? T.accent : T.border);
   wipe(g, s, n);
 }
 
@@ -240,7 +312,14 @@ void scr_pair(G &g, const Snap &s, const Nav &n) {
       int r = 16 + ph * 28 / 255;
       g.ring(cx, cy, r, mix(T.bg, T.accent, 255 - ph));
     }
-    arc(g, cx, cy, 46, 5, 0, (int)(s.pairLeftMs / 60000.0f * 360), T.accent);
+    { // radar sweep with a fading tail
+      int ang = (int)((s.nowMs / 5) % 360);
+      for (int i = 0; i < 16; i++) {
+        float a = (ang - i * 5) * 0.0174533f;
+        g.line(cx, cy, cx + (int)(sinf(a) * 44), cy - (int)(cosf(a) * 44), mix(T.bg, T.accent, (uint8_t)(210 - i * 13)));
+      }
+    }
+    arc(g, cx, cy, 46, 5, 0, (int)(s.pairLeftMs / (float)(s.pairTotalMs ? s.pairTotalMs : 60000) * 360), T.accent);
   } else {
     g.ring(cx, cy, 46, T.border);
   }
@@ -274,7 +353,10 @@ void ui_render(G &g, const Snap &s, const Nav &n) {
     case SC_POWER: scr_power(g, s, n); break;
     case SC_SETTINGS: scr_settings(g, s, n); break;
     case SC_ABOUT: scr_about(g, s, n); break;
+    case SC_LAG: scr_lag(g, s, n); break;
+    case SC_LOG: scr_log(g, s, n); break;
     default: break;
   }
+  postTransition(g, s, n);
   if (n.screen != SC_SPLASH) ui_draw_toast(g, n, s.nowMs);
 }

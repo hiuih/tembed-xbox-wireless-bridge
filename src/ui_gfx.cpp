@@ -196,3 +196,23 @@ void icoMoon(G &g, int cx, int cy, col_t k, col_t hole) {
   g.disc(cx, cy, 11, k);
   g.disc(cx + 6, cy - 4, 10, hb);
 }
+
+// heartbeat line: latency
+void icoPulse(G &g, int cx, int cy, col_t k, col_t hole) {
+  (void)hole;
+  const int xs[8] = {-13, -6, -3, 0, 3, 6, 9, 13};
+  const int ys[8] = {1, 1, -3, 10, -11, 2, 1, 1};
+  for (int i = 0; i < 7; i++) {
+    g.line(cx + xs[i], cy + ys[i], cx + xs[i + 1], cy + ys[i + 1], k);
+    g.line(cx + xs[i], cy + ys[i] + 1, cx + xs[i + 1], cy + ys[i + 1] + 1, k);
+  }
+}
+
+// three rows with bullets: event log
+void icoList(G &g, int cx, int cy, col_t k, col_t hole) {
+  (void)hole;
+  for (int i = 0; i < 3; i++) {
+    g.disc(cx - 10, cy - 8 + i * 8, 2, k);
+    g.rrect(cx - 4, cy - 10 + i * 8, 16 - i * 3, 4, 2, k);
+  }
+}

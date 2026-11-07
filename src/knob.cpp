@@ -1,4 +1,5 @@
 #include "knob.h"
+#include "settings.h"
 #include "pairing.h"
 #include "hid.h"
 #include "leds.h"
@@ -14,7 +15,7 @@ void knob_tick() {
     if (!downAt) { downAt = now; done = false; done2 = false; }
     else if (!done && now - downAt >= 1000) {
       done = true;
-      if (pairing_active()) pairing_stop(); else pairing_start();
+      if (pairing_active()) pairing_stop(); else pairing_start(settings_pair_ms());
     }
 #ifdef XINPUT_MODE
     if (!done2 && now - downAt >= 4000) { done2 = true; leds_flash(170, 0, 255, 600); delay(600); xinput_set_style(1 - xinput_style()); }

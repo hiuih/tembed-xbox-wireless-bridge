@@ -23,6 +23,17 @@ void scr_spectrum(G &g, const Snap &s, const Nav &n);
 void scr_power(G &g, const Snap &s, const Nav &n);
 void scr_settings(G &g, const Snap &s, const Nav &n);
 void scr_about(G &g, const Snap &s, const Nav &n);
+// screens (ui_screens3.cpp)
+void scr_lag(G &g, const Snap &s, const Nav &n);
+void scr_log(G &g, const Snap &s, const Nav &n);
+
+#define HOME_TILES 9
+Screen ui_home_screen(int tile);      // screen opened by a home tile
+int ui_home_index(Screen sc);         // tile that opens this screen
+void settingsValue(const Snap &s, int row, char *out, size_t n);
+const char *settingsHint(int row);
+#define SETTINGS_ROWS 17
+int settingsDanger(int row);          // 1 if the row needs a second click
 
 #define SB_H 22
 #define FOOT_Y 156

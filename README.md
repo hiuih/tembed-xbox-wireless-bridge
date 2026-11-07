@@ -222,6 +222,13 @@ Pair (radar + countdown), Radio (channel, frame and event rates, queue drops, lo
 Spectrum (2.4 GHz occupancy from the nRF24, with Wi-Fi channels 1/6/11 marked), Power (battery, voltage graph, sleep now),
 Settings (brightness, LED ring, accent colour, auto-sleep, USB style, knob direction, forget all, bootloader), About.
 
+**0.7 additions:** 9-tile home (scrolls), **Latency** screen (input-gap histogram, loss, rate per controller), **Event log**
+(connects, USB re-plugs, pairing, sleep), and 17 settings: brightness, auto-dim, auto-sleep, accent, LED ring level and idle
+effect, flip screen, knob direction, **USB mode**, stick deadzone, Xbox-button-wakes-PC, pairing window, pair on power-up,
+reset, forget all, bootloader. The footer explains the selected setting.
+**USB mode:** *Wired 360 pad* presents the descriptor of a wired Xbox 360 controller (best for most games);
+*360 receiver* presents the descriptor of the wireless-receiver style device. Windows treats each as a separate device.
+
 **Automatic Xbox pads:** the number of Xbox controllers shown to the PC follows the number actually connected (1 to 4). It grows
 1.5 s after another controller becomes ready and shrinks only after the extra ones have been gone for 30 s. The change is a soft
 USB unplug/replug (about a second), not a restart. *Settings > USB style* switches between the two descriptor styles (A/B).

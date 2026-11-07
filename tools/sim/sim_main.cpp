@@ -25,6 +25,9 @@ static void fillSnap(int pads) {
     snap.vbatHist[i] = 4120 - i * 2 + (int)(15 * sinf(i * 0.4f));
   }
   snap.nrfOk = true;
+  snap.autoDim = 2; snap.ringFx = 1; snap.deadzone = 2; snap.pairWin = 1; snap.wakePc = true; snap.pairTotalMs = 60000;
+  { const char *m[] = {"+Pad 2 ready", "USB: 2 pads emulated", "USB re-plug: 2 pads", "Pad 2 found", "!Pairing opened", "-Pad 1 lost", "+Pad 1 ready", "Computer awake", "!Computer asleep", "+USB connected", "boot: poweron"};
+    snap.logN = 11; for (int i = 0; i < 11; i++) { snprintf(snap.logMsg[i], UI_LOG_LEN, "%s", m[i]); snap.logAtS[i] = 4210 - i * 37; } }
   for (int i = 0; i < 84; i++) {
     float wifi = 0;
     for (int c : {12, 37, 62}) { float d = (i - c) / 7.0f; wifi += 70 * expf(-d * d); }
@@ -35,6 +38,7 @@ static void fillSnap(int pads) {
     PadView &p = snap.pad[i];
     p.present = true; p.online = true;
     snprintf(p.name, sizeof(p.name), "Series X|S");
+    p.gap[0] = i ? 380 : 1200; p.gap[1] = i ? 260 : 410; p.gap[2] = i ? 150 : 60; p.gap[3] = i ? 70 : 12; p.gap[4] = i ? 20 : 3; p.gap[5] = i ? 6 : 1;
     p.rssi = i ? -63 : -41; p.battKnown = true; p.battLevel = i ? 1 : 3; p.rateHz = i ? 64 : 112; p.lossPermille = i ? 142 : 31; p.upS = 300;
     for (int a = 0; a < 8; a++) { p.trail[a][0] = 40 - a * 5; p.trail[a][1] = -30 + a * 4; p.trail[a][2] = -20 + a * 2; p.trail[a][3] = 25 - a * 3; }
   }
@@ -82,6 +86,21 @@ int main(int argc, char **argv) {
   snap.nowMs = 900; setNav(SC_SPLASH); render("splash");
   fillSnap(0); snap.nowMs = 5200; setNav(SC_PADS); render("pads_empty");
   fillSnap(2); snap.pairing = true; snap.pairLeftMs = 12000; setNav(SC_HOME, 1); render("home_pairing");
-  fillSnap(2); setNav(SC_PAD, 0); snprintf(nav.toast, sizeof(nav.toast), "Rumble sent"); nav.toastUntilMs = 99999; render("pad_toast");
+  fillSnap(2); setNav(SC_HOME, 8); render("home_sel8");
+  fillSnap(2); setNav(SC_LAG, 0); render("lag");
+  fillSnap(2); setNav(SC_LAG, 1); render("lag_pad2");
+  fillSnap(0); setNav(SC_LAG, 0); render("lag_none");
+  fillSnap(2); setNav(SC_LOG, 2); render("log");
+  fillSnap(2); setNav(SC_SETTINGS, 8, 4.0f); render("settings_usb");
+  fillSnap(2); setNav(SC_SETTINGS, 16, 12.0f); render("settings_end");
+  fillSnap(2); setNav(SC_ABOUT); snap.resetReason = "deepsleep"; snap.sleepWhy = "hold"; render("about2");
+  // mid-transition frames
+  fillSnap(2); setNav(SC_HOME, 1); snap.nowMs = 170; render("fx_home_in");
+  fillSnap(2); setNav(SC_SETTINGS, 0); snap.nowMs = 150; render("fx_settings_in");
+  fillSnap(2); setNav(SC_LAG, 0); snap.nowMs = 140; render("fx_lag_in");
+  fillSnap(2); setNav(SC_LOG, 0); snap.nowMs = 160; render("fx_log_in");
+  fillSnap(2); snap.pairing = true; snap.pairLeftMs = 41000; setNav(SC_PAIR); snap.nowMs = 9000; render("fx_pair_sweep");
+  fillSnap(2); setNav(SC_SPLASH); snap.nowMs = 1100; render("fx_splash_mid");
+  fillSnap(2); setNav(SC_PAD, 0); snprintf(nav.toast, sizeof(nav.toast), "Rumble sent"); nav.toastUntilMs = snap.nowMs + 1500; render("pad_toast");
   return 0;
 }

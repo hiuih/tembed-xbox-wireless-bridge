@@ -23,6 +23,9 @@ static uint32_t pairStartedAt = 0;
 // Brightness is low on purpose: 8 LEDs at full tilt plus Wi-Fi TX can brown out a USB-powered board.
 void leds_off() { ledsOff = true; strip.clear(); strip.show(); }
 
+static uint8_t idleFx = 0;
+void leds_set_idle_fx(uint8_t fx) { idleFx = fx % 3; }
+
 void leds_set_level(uint8_t level) {
   static const uint8_t br[4] = {0, 12, 32, 72};
   levelOff = level == 0;
@@ -130,12 +133,19 @@ void leds_tick() {
       else c = col(0, 200, 0);
       strip.setPixelColor(shown++, c);
     }
-    if (!shown) {   // idle: slow amber breath on LED 1
-      uint8_t v = 10 + (uint8_t)(20 * (1 + sinf(now / 600.0f)));
-      strip.setPixelColor(0, col(v, v / 3, 0));
+    if (!shown) {
+      if (idleFx == 1) {          // whole ring breathes
+        uint8_t v = 8 + (uint8_t)(110 * (1 + sinf(now / 700.0f)) / 2);
+        for (int i = 0; i < 7; i++) strip.setPixelColor(i, col(0, v, v / 2));
+      } else if (idleFx == 2) {   // rainbow chasing around the ring
+        for (int i = 0; i < 7; i++) strip.setPixelColor(i, strip.ColorHSV((uint16_t)(now * 9 + i * 9362), 255, 140));
+      } else {                    // slow amber breath on LED 1
+        uint8_t v = 10 + (uint8_t)(20 * (1 + sinf(now / 600.0f)));
+        strip.setPixelColor(0, col(v, v / 3, 0));
+      }
     }
-    // USB link on LED 8
-    uint32_t u = !hid_mounted() ? col(200, 0, 0) : hid_suspended() ? col(0, 60, 255) : col(0, 90, 0);
+    // USB link on LED 8 (dark when no controller is connected: nothing is emulated then)
+    uint32_t u = hid_slots() == 0 ? col(6, 6, 6) : !hid_mounted() ? col(200, 0, 0) : hid_suspended() ? col(0, 60, 255) : col(0, 90, 0);
     strip.setPixelColor(7, u);
   }
   // per-LED overlays (connect/disconnect flashes)

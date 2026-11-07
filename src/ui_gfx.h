@@ -55,6 +55,8 @@ void usbIcon(G &g, int x, int y, col_t k);
 void sparkline(G &g, int x, int y, int w, int h, const uint16_t *v, int n, uint16_t vmin, uint16_t vmax, col_t k, bool fill);
 
 // icons, drawn centred on (cx, cy) in roughly a 28x28 box
+void icoPulse(G &g, int cx, int cy, col_t k, col_t hole = 0);
+void icoList(G &g, int cx, int cy, col_t k, col_t hole = 0);
 void icoGamepad(G &g, int cx, int cy, col_t k, col_t hole = 0);
 void icoPair(G &g, int cx, int cy, col_t k, col_t hole = 0);
 void icoRadio(G &g, int cx, int cy, col_t k, col_t hole = 0);

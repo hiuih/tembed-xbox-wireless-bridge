@@ -10,6 +10,7 @@
 void leds_begin();
 void leds_tick();
 void leds_off();
+void leds_set_idle_fx(uint8_t fx);    // idle ring effect with no controller: 0 amber breath, 1 breathe, 2 rainbow
 void leds_set_level(uint8_t level);   // 0 off, 1 low, 2 medium, 3 high           // all dark (used before powering off)
 void leds_flash(uint8_t r, uint8_t g, uint8_t b, uint16_t ms);   // whole ring
 void leds_pad_event(int slot, PadEvent ev);                       // per-controller flashes

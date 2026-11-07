@@ -18,6 +18,8 @@ struct PadView {
   uint32_t upS;
   // short stick history for the trail effect (normalised -100..100)
   int8_t trail[8][4];      // [age][lx, ly, rx, ry]
+  uint32_t gap[6];         // gaps between input reports: <10, <20, <40, <80, <160, >=160 ms
+  uint32_t gipSeen, gipMissed;
 };
 
 struct PerfView {
@@ -25,6 +27,10 @@ struct PerfView {
 };
 
 #define UI_HIST 60
+#define UI_LOG_N 24
+#define UI_LOG_LEN 30
+
+static inline const char *usbModeName(int style) { return style ? "360 receiver" : "Wired 360 pad"; }
 struct Snap {
   uint32_t nowMs;
   uint32_t uptimeS;
@@ -55,6 +61,13 @@ struct Snap {
   // settings shown on screen
   uint8_t brightness, ledLevel, sleepMin, accent;
   bool reverseKnob;
+  uint8_t autoDim, ringFx, deadzone, pairWin;
+  bool flip, wakePc, pairBoot;
+  uint32_t pairTotalMs;            // length of the pairing window in use
+  // event log, newest first
+  int logN;
+  char logMsg[UI_LOG_N][UI_LOG_LEN];
+  uint32_t logAtS[UI_LOG_N];
   const char *fwVersion;
   const char *sleepWhy;            // why the previous run slept: - / hold / auto / menu
   uint8_t pmicFault;               // charger-chip fault bits (0 = none)
@@ -65,7 +78,7 @@ struct Snap {
 };
 
 enum Screen : uint8_t {
-  SC_SPLASH, SC_HOME, SC_PADS, SC_PAD, SC_PAIR, SC_RADIO, SC_SPECTRUM, SC_POWER, SC_SETTINGS, SC_ABOUT, SC_COUNT
+  SC_SPLASH, SC_HOME, SC_PADS, SC_PAD, SC_PAIR, SC_RADIO, SC_SPECTRUM, SC_POWER, SC_SETTINGS, SC_ABOUT, SC_LAG, SC_LOG, SC_COUNT
 };
 
 struct Nav {
