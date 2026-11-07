@@ -10,3 +10,4 @@ size_t dlog_read(uint32_t offset, uint8_t *out, size_t n);          // bytes of 
 uint32_t dlog_size();
 void dlog_note_read();                                              // a reader is attached
 uint32_t dlog_last_read_ms();
+void dlog_install_crash_capture();   // asserts, aborts and CPU exceptions are written to the log before the reboot

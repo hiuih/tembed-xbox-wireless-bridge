@@ -57,3 +57,58 @@ size_t dlog_read(uint32_t offset, uint8_t *out, size_t n) {
 
 void dlog_note_read() { lastRead = millis() ? millis() : 1; }
 uint32_t dlog_last_read_ms() { return lastRead; }
+
+// Crash capture (only where the build enables it with DLOG_CRASH_CAPTURE and the matching --wrap link flags).
+// The panic handler prints to a UART that is not reachable on this board, so instead the text of an assert / abort /
+// ESP_ERROR_CHECK failure and the registers + call chain of a CPU exception are written to this persistent log first.
+#ifdef DLOG_CRASH_CAPTURE
+#include "esp_debug_helpers.h"
+#include "esp_err.h"
+#include "freertos/xtensa_api.h"
+#include "xtensa/xtensa_context.h"
+
+static void logChain(const char *tag, uint32_t pc, uint32_t sp, uint32_t nextPc) {
+  esp_backtrace_frame_t f = {pc, sp, nextPc};
+  char line[150]; int n = 0;
+  n += snprintf(line + n, sizeof(line) - n, "%s chain:", tag);
+  for (int i = 0; i < 14; i++) {
+    n += snprintf(line + n, sizeof(line) - n, " %08x", (unsigned)f.pc);
+    if (!esp_backtrace_get_next_frame(&f)) break;
+    if (n > (int)sizeof(line) - 12) break;
+  }
+  dlog("%s", line);
+}
+
+extern "C" void __real_abort(void);
+extern "C" void __wrap_abort(void) {
+  uint32_t pc, sp, next;
+  esp_backtrace_get_start(&pc, &sp, &next);
+  logChain("ABORT", pc, sp, next);
+  __real_abort();
+}
+
+extern "C" void __real___assert_func(const char *, int, const char *, const char *);
+extern "C" void __wrap___assert_func(const char *file, int line, const char *func, const char *expr) {
+  dlog("ASSERT failed: %s:%d %s: %s", file ? file : "?", line, func ? func : "?", expr ? expr : "?");
+  __real___assert_func(file, line, func, expr);
+}
+
+extern "C" void __real__esp_error_check_failed(esp_err_t, const char *, int, const char *, const char *);
+extern "C" void __wrap__esp_error_check_failed(esp_err_t rc, const char *file, int line, const char *function, const char *expression) {
+  dlog("ESP_ERROR_CHECK failed: rc=0x%x %s:%d %s: %s", (unsigned)rc, file ? file : "?", line, function ? function : "?", expression ? expression : "?");
+  __real__esp_error_check_failed(rc, file, line, function, expression);
+}
+
+static void excHandler(XtExcFrame *ef) {
+  dlog("EXCEPTION cause=%u pc=%08x a0=%08x sp=%08x excvaddr=%08x", (unsigned)ef->exccause, (unsigned)ef->pc, (unsigned)ef->a0, (unsigned)ef->a1, (unsigned)ef->excvaddr);
+  logChain("EXC", ef->pc, ef->a1, ef->a0);
+  abort();
+}
+
+void dlog_install_crash_capture() {
+  static const int causes[] = {0, 2, 3, 6, 9, 12, 13, 14, 15, 20, 28, 29};
+  for (int c : causes) xt_set_exception_handler(c, (xt_exc_handler)excHandler);
+}
+#else
+void dlog_install_crash_capture() {}
+#endif

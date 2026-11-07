@@ -92,6 +92,7 @@ static void status() {
 void setup() {
   bootguard_begin();
   dlog_begin();
+  dlog_install_crash_capture();
 #if HAS_PMIC
   powerbtn_begin();
   dlog("==== BOOT reason=%s crashes=%lu loopMark=%u uiMark=%u slept=%s ====", boot_reason(), (unsigned long)boot_crash_count(), boot_prev_mark(), boot_prev_ui_mark(), powerbtn_last_sleep());
