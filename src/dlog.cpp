@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 
 #define DLOG_SZ 4096
 #define DLOG_MAGIC 0xD106B007u
@@ -12,8 +13,14 @@ static RTC_NOINIT_ATTR uint32_t magic;
 static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 static volatile uint32_t lastRead = 0;
 
+static void failedAlloc(size_t size, uint32_t caps, const char *fn) {
+  dlog("ALLOC FAILED size=%u caps=0x%x in %s, internal free=%u largest=%u", (unsigned)size, (unsigned)caps, fn ? fn : "?",
+       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+}
+
 void dlog_begin() {
   if (magic != DLOG_MAGIC) { memset(ring, 0, sizeof(ring)); head = 0; magic = DLOG_MAGIC; }
+  heap_caps_register_failed_alloc_callback(failedAlloc);   // a memory failure is written to the log before anything else happens
 }
 
 static void put(const char *s, size_t n) {

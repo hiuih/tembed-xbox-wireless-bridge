@@ -73,7 +73,9 @@ void ble_begin(bool on) {
   }
   bleTrying = BLE_TRYING;
   buildMap();
+  dlog("BLE: step 1 NimBLEDevice::init, free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   NimBLEDevice::init("Xbox Bridge");
+  dlog("BLE: step 2 init returned, free=%u initialized=%d", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (int)NimBLEDevice::getInitialized());
   if (!NimBLEDevice::getInitialized()) {
     bleTrying = 0;
     dlog("BLE: init failed");
@@ -83,20 +85,24 @@ void ble_begin(bool on) {
   NimBLEDevice::setSecurityAuth(true, false, true);          // bond, no MITM, secure connections
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);  // "just works" pairing
   NimBLEDevice::setPower(ESP_PWR_LVL_P3);
+  dlog("BLE: step 3 createServer");
   server = NimBLEDevice::createServer();
   server->setCallbacks(&srvCb);
+  dlog("BLE: step 4 HID device, free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   NimBLEHIDDevice *hid = new NimBLEHIDDevice(server);
   hid->manufacturer()->setValue("Xbox Bridge");
   hid->pnp(0x02, 0x303A, 0x4B01, 0x0100);
   hid->hidInfo(0x00, 0x01);
   for (int i = 0; i < BLE_PADS; i++) inputs[i] = hid->inputReport(i + 1);
   hid->reportMap(reportMap, sizeof(reportMap));
+  dlog("BLE: step 5 startServices, free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   hid->startServices();
   hid->setBatteryLevel(100);
   adv = NimBLEDevice::getAdvertising();
   adv->setAppearance(0x03C4);                                // HID gamepad
   adv->addServiceUUID(hid->hidService()->getUUID());
   adv->setScanResponse(true);
+  dlog("BLE: step 6 advertising, free=%u", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   adv->start();
   inited = true;
   state = BLE_ADVERTISING;

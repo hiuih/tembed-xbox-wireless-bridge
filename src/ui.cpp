@@ -439,7 +439,7 @@ void ui_begin() {
   // low priority on core 0 (alongside Wi-Fi): drawing can never delay the protocol loop on core 1
   spiLock = xSemaphoreCreateMutex();
   cmdQ = xQueueCreate(8, sizeof(Cmd));
-  xTaskCreatePinnedToCore(uiTask, "ui", 16384, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(uiTask, "ui", 8192, nullptr, 1, nullptr, 0);
 }
 
 void ui_off() { ledcWrite(0, 0); }
