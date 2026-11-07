@@ -337,6 +337,7 @@ void xinput_dump(char *buf, size_t n) {
   }
 }
 
+int hid_pad_slot(int idx) { return idx >= 0 && idx < XI_MAX_IF ? ifToSlot[idx] : -1; }
 int hid_slots() { return nIf; }
 int hid_max_slots() { return XI_MAX_IF; }
 void hid_request_slots(int) {}           // automatic: nothing to request

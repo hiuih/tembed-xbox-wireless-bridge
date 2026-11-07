@@ -22,6 +22,7 @@
 #include "radio.h"
 #include "evlog.h"
 #include "dlog.h"
+#include "ble.h"
 
 #define BAND_H 85
 #define FRAME_MS 50
@@ -115,7 +116,8 @@ static void fillSnap() {
   if (snap.nrfOk) { memcpy(snap.spec, nrf24_occupancy(), 84); memcpy(snap.peak, nrf24_peak(), 84); }
   snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
   snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
-  snap.fwVersion = "0.9";
+  snap.fwVersion = "1.0";
+  snap.bleOn = cfg.bleOn; snap.bleState = ble_state();
   snap.autoDim = cfg.autoDim; snap.ringFx = cfg.ringFx; snap.deadzone = cfg.deadzone; snap.pairWin = cfg.pairWin;
   snap.flip = cfg.flip; snap.wakePc = cfg.wakePc; snap.pairBoot = cfg.pairBoot; snap.pairTotalMs = settings_pair_ms();
   snap.logN = evlog_copy(snap.logMsg, snap.logAtS);
@@ -211,14 +213,16 @@ static void settingsClick() {
     case 6: cfg.flip = !cfg.flip; tft.setRotation(cfg.flip ? 3 : 1); break;
     case 7: cfg.reverseKnob = !cfg.reverseKnob; encoder_set_reverse(cfg.reverseKnob); break;
     case 8: xinput_set_style(1 - xinput_style()); { char m[40]; snprintf(m, sizeof(m), "USB: %s", usbModeName(1 - snap.style)); toast(m); } evlog_add("USB mode: %s", usbModeName(1 - snap.style)); return;
-    case 9: cfg.deadzone = (cfg.deadzone + 1) % 6; break;
-    case 10: cfg.wakePc = !cfg.wakePc; break;
-    case 11: cfg.pairWin = (cfg.pairWin + 1) % 4; break;
-    case 12: cfg.pairBoot = !cfg.pairBoot; break;
-    case 13: if (nav.confirm) { settings_reset(); applyAllSettings(); nav.confirm = false; toast("Settings reset"); } else nav.confirm = true; return;
-    case 14: if (nav.confirm) { forgetAll(); nav.confirm = false; evlog_add("-All controllers forgotten"); } else nav.confirm = true; return;
-    case 15: if (nav.confirm) { toast("Bootloader..."); delay(500); boot_to_download(); } else nav.confirm = true; return;
-    case 16: goTo(SC_ABOUT); return;
+    case 9: cfg.bleOn = !cfg.bleOn; settings_save(); toast("Restarting for Bluetooth..."); dlog("Bluetooth %s: restarting", cfg.bleOn ? "on" : "off"); delay(900); ESP.restart(); return;
+    case 10: cfg.deadzone = (cfg.deadzone + 1) % 6; break;
+    case 11: cfg.wakePc = !cfg.wakePc; break;
+    case 12: cfg.pairWin = (cfg.pairWin + 1) % 4; break;
+    case 13: cfg.pairBoot = !cfg.pairBoot; break;
+    case 14: if (nav.confirm) { bool ble = cfg.bleOn; settings_reset(); applyAllSettings(); nav.confirm = false; toast(ble ? "Reset (Bluetooth: restart)" : "Settings reset"); } else nav.confirm = true; return;
+    case 15: if (nav.confirm) { nav.confirm = false; toast(ble_forget_hosts() ? "Bluetooth hosts forgotten" : "Turn Bluetooth on first"); } else nav.confirm = true; return;
+    case 16: if (nav.confirm) { forgetAll(); nav.confirm = false; evlog_add("-All controllers forgotten"); } else nav.confirm = true; return;
+    case 17: if (nav.confirm) { toast("Bootloader..."); delay(500); boot_to_download(); } else nav.confirm = true; return;
+    case 18: goTo(SC_ABOUT); return;
   }
   settings_save();
 }
@@ -248,7 +252,7 @@ static void handleInput() {
   if (back) {
     switch (nav.screen) {
       case SC_PAD: goTo(SC_PADS); break;
-      case SC_ABOUT: if (prevScreen == SC_SETTINGS) goTo(SC_SETTINGS, 16); else { goTo(SC_HOME); nav.sel = ui_home_index(SC_ABOUT); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; } break;
+      case SC_ABOUT: if (prevScreen == SC_SETTINGS) goTo(SC_SETTINGS, 18); else { goTo(SC_HOME); nav.sel = ui_home_index(SC_ABOUT); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; } break;
       case SC_HOME: break;
       default: { int from = nav.screen; goTo(SC_HOME); nav.sel = ui_home_index((Screen)from); nav.selX = 8 + (nav.sel % 3) * 104; nav.selY = 28 + (nav.sel / 3) * 64; nav.scrollAnim = (nav.sel / 3) > 1 ? (nav.sel / 3) - 1 : 0; }
     }

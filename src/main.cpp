@@ -19,6 +19,7 @@
 #include "settings.h"
 #include "evlog.h"
 #include "dlog.h"
+#include "ble.h"
 
 #ifndef XINPUT_MODE
 static uint32_t restartAt = 0;
@@ -109,6 +110,7 @@ void setup() {
 #if HAS_SCREEN
   delay(200);
   ui_begin();
+  ble_begin(cfg.bleOn);
 #endif
 #ifdef AUTO_PAIR_BOOT_MS
   pairing_start(AUTO_PAIR_BOOT_MS);   // headless: pairing window opens at every power-up
@@ -131,6 +133,7 @@ void loop() {
   radio_set_pairing(pairing_beacon_flag());
   boot_mark(4); radio_tick();
   boot_mark(5); hid_task();
+  ble_tick();
 #if HAS_SCREEN
   ui_pump();
 #endif

@@ -25,7 +25,7 @@ static void fillSnap(int pads) {
     snap.vbatHist[i] = 4120 - i * 2 + (int)(15 * sinf(i * 0.4f));
   }
   snap.nrfOk = true;
-  snap.autoDim = 2; snap.ringFx = 1; snap.deadzone = 2; snap.pairWin = 1; snap.wakePc = true; snap.pairTotalMs = 60000;
+  snap.bleOn = true; snap.bleState = 2; snap.autoDim = 2; snap.ringFx = 1; snap.deadzone = 2; snap.pairWin = 1; snap.wakePc = true; snap.pairTotalMs = 60000;
   { const char *m[] = {"+Pad 2 ready", "USB: 2 pads emulated", "USB re-plug: 2 pads", "Pad 2 found", "!Pairing opened", "-Pad 1 lost", "+Pad 1 ready", "Computer awake", "!Computer asleep", "+USB connected", "boot: poweron"};
     snap.logN = 11; for (int i = 0; i < 11; i++) { snprintf(snap.logMsg[i], UI_LOG_LEN, "%s", m[i]); snap.logAtS[i] = 4210 - i * 37; } }
   for (int i = 0; i < 84; i++) {

@@ -14,6 +14,7 @@ struct UiSettings {
   bool wakePc = true;        // Xbox button / controller power-on wakes a sleeping computer
   uint8_t pairWin = 1;       // pairing window: 0 30 s, 1 1 min, 2 2 min, 3 5 min
   bool pairBoot = false;     // open the pairing window at power-up
+  bool bleOn = false;        // Bluetooth LE gamepads (needs a restart to apply)
 };
 extern UiSettings cfg;
 void settings_begin();

@@ -62,7 +62,8 @@ struct Snap {
   uint8_t brightness, ledLevel, sleepMin, accent;
   bool reverseKnob;
   uint8_t autoDim, ringFx, deadzone, pairWin;
-  bool flip, wakePc, pairBoot;
+  bool flip, wakePc, pairBoot, bleOn;
+  uint8_t bleState;                // 0 off, 1 advertising, 2 connected
   uint32_t pairTotalMs;            // length of the pairing window in use
   // event log, newest first
   int logN;

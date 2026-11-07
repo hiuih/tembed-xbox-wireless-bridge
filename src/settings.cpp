@@ -18,6 +18,7 @@ void settings_begin() {
   cfg.wakePc = p.getBool("wakepc", cfg.wakePc);
   cfg.pairWin = p.getUChar("pairwin", cfg.pairWin) % 4;
   cfg.pairBoot = p.getBool("pairboot", cfg.pairBoot);
+  cfg.bleOn = p.getBool("bleon", cfg.bleOn);
   p.end();
 }
 
@@ -36,6 +37,7 @@ void settings_save() {
   p.putBool("wakepc", cfg.wakePc);
   p.putUChar("pairwin", cfg.pairWin);
   p.putBool("pairboot", cfg.pairBoot);
+  p.putBool("bleon", cfg.bleOn);
   p.end();
 }
 

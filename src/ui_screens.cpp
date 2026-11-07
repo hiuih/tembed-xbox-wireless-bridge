@@ -25,6 +25,7 @@ void ui_chrome(G &g, const Snap &s, const Nav &n, const char *title, const char 
   if (s.pmicOk) { snprintf(b, sizeof(b), "%d%%", s.battPct); g.textR(284, 7, b, T.dim, FONT_S); }
   col_t uk = !s.usbMounted ? T.dim : s.usbSuspended ? T.warn : T.good;
   usbIcon(g, 212, 5, uk);
+  if (s.bleOn) g.text(245, 7, "BT", s.bleState == 2 ? T.blue : s.bleState == 1 ? T.warn : T.dim, FONT_S);
   if (s.usbMounted) { snprintf(b, sizeof(b), "%d", s.gamepads); g.text(233, 7, b, uk, FONT_S); }
   if (s.pairing) {
     uint32_t ph = (s.nowMs / 6) & 255;

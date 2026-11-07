@@ -32,7 +32,7 @@ Screen ui_home_screen(int tile);      // screen opened by a home tile
 int ui_home_index(Screen sc);         // tile that opens this screen
 void settingsValue(const Snap &s, int row, char *out, size_t n);
 const char *settingsHint(int row);
-#define SETTINGS_ROWS 17
+#define SETTINGS_ROWS 19
 int settingsDanger(int row);          // 1 if the row needs a second click
 
 #define SB_H 22

@@ -138,6 +138,7 @@ void hid_task() {
 }
 
 int hid_slots() { return nSlots; }
+int hid_pad_slot(int idx) { return idx >= 0 && idx < nSlots ? idx : -1; }
 int hid_max_slots() { return MAX_PADS; }
 void hid_request_slots(int n) {
   if (n < 1) n = 1;

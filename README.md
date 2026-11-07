@@ -229,6 +229,12 @@ reset, forget all, bootloader. The footer explains the selected setting.
 **USB mode:** *Wired 360 pad* presents the descriptor of a wired Xbox 360 controller (best for most games);
 *360 receiver* presents the descriptor of the wireless-receiver style device. Windows treats each as a separate device.
 
+**Bluetooth (1.0):** *Settings > Bluetooth* (restarts the board) makes it a Bluetooth LE gamepad device named "Xbox Bridge".
+Pair it from the computer's Bluetooth settings; the Xbox controllers appear as up to four separate gamepads in that one
+device (one HID gamepad collection each). The ESP32-S3 has Bluetooth LE only, it is not an XInput device (games that only
+read XInput will not see it; games using generic HID/DirectInput/SDL will), and it shares the 2.4 GHz radio with the Xbox
+link, so expect a little more latency than USB. Off by default.
+
 **Automatic Xbox pads:** the number of Xbox controllers shown to the PC follows the number actually connected (1 to 4). It grows
 1.5 s after another controller becomes ready and shrinks only after the extra ones have been gone for 30 s. The change is a soft
 USB unplug/replug (about a second), not a restart. *Settings > USB style* switches between the two descriptor styles (A/B).

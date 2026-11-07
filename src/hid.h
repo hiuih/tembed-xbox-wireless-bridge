@@ -29,5 +29,6 @@ void xinput_dump(char *buf, size_t n);
 #endif
 
 // XInput descriptor style (0 = A real pad, 1 = B receiver style); a no-op in the plain HID builds.
+int hid_pad_slot(int idx);                // controller slot behind output pad idx (connect order), -1 if none
 int xinput_style();
 void xinput_set_style(int st);            // changes style; the USB device re-enumerates, no restart
