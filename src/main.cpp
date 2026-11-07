@@ -120,6 +120,7 @@ void setup() {
   power_begin();
 #endif
 #if HAS_SCREEN
+  if (!updMode) { settings_begin(); ble_begin(cfg.bleOn); }   // Bluetooth first: starting it after the Wi-Fi re-init below aborts inside the coexistence layer
   if (!updMode)
 #endif
   radio_begin();
@@ -129,7 +130,6 @@ void setup() {
   delay(200);
   if (updMode) updater_begin();
   ui_begin();
-  if (!updMode) ble_begin(cfg.bleOn);
 #endif
 #ifdef AUTO_PAIR_BOOT_MS
   pairing_start(AUTO_PAIR_BOOT_MS);   // headless: pairing window opens at every power-up

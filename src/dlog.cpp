@@ -79,8 +79,12 @@ static void logChain(const char *tag, uint32_t pc, uint32_t sp, uint32_t nextPc)
   dlog("%s", line);
 }
 
+static volatile bool inCrash = false;   // abort() itself raises a CPU exception: log only the first event
+
 extern "C" void __real_abort(void);
 extern "C" void __wrap_abort(void) {
+  if (inCrash) __real_abort();
+  inCrash = true;
   uint32_t pc, sp, next;
   esp_backtrace_get_start(&pc, &sp, &next);
   logChain("ABORT", pc, sp, next);
@@ -99,9 +103,16 @@ extern "C" void __wrap__esp_error_check_failed(esp_err_t rc, const char *file, i
   __real__esp_error_check_failed(rc, file, line, function, expression);
 }
 
+extern "C" void xt_unhandled_exception(XtExcFrame *frame);   // the normal panic entry (esp_system/panic.c)
+
 static void excHandler(XtExcFrame *ef) {
+  if (!inCrash) {
+    inCrash = true;
   dlog("EXCEPTION cause=%u pc=%08x a0=%08x sp=%08x excvaddr=%08x", (unsigned)ef->exccause, (unsigned)ef->pc, (unsigned)ef->a0, (unsigned)ef->a1, (unsigned)ef->excvaddr);
   logChain("EXC", ef->pc, ef->a1, ef->a0);
+  }
+  static const int causes[] = {0, 2, 3, 6, 9, 12, 13, 14, 15, 20, 28, 29};
+  for (int c : causes) xt_set_exception_handler(c, (xt_exc_handler)xt_unhandled_exception);   // back to the normal panic path
   abort();
 }
 
