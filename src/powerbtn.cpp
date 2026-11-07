@@ -14,6 +14,7 @@
 #define PWRKEY_HOLD_MS 5000
 
 #include "esp_attr.h"
+#include "dlog.h"
 static RTC_NOINIT_ATTR uint32_t sleepWhy;      // survives deep sleep
 #define SLEEP_MAGIC 0x51EE0000u
 static const char *lastSleep = "-";
@@ -36,6 +37,7 @@ float power_hold_progress() { return downAt ? (float)(millis() - downAt) / PWRKE
 
 static void powerOff(int why) {
   sleepWhy = SLEEP_MAGIC | why;
+  dlog("SLEEP why=%d (1 hold, 2 auto, 3 menu)", why);
   USBSerial.println("deep sleep (press the top key to wake)");
   USBSerial.flush();
   leds_off();

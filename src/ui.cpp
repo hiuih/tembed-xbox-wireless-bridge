@@ -21,6 +21,7 @@
 #include "bootguard.h"
 #include "radio.h"
 #include "evlog.h"
+#include "dlog.h"
 
 #define BAND_H 85
 #define FRAME_MS 50
@@ -114,7 +115,7 @@ static void fillSnap() {
   if (snap.nrfOk) { memcpy(snap.spec, nrf24_occupancy(), 84); memcpy(snap.peak, nrf24_peak(), 84); }
   snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
   snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
-  snap.fwVersion = "0.8";
+  snap.fwVersion = "0.9";
   snap.autoDim = cfg.autoDim; snap.ringFx = cfg.ringFx; snap.deadzone = cfg.deadzone; snap.pairWin = cfg.pairWin;
   snap.flip = cfg.flip; snap.wakePc = cfg.wakePc; snap.pairBoot = cfg.pairBoot; snap.pairTotalMs = settings_pair_ms();
   snap.logN = evlog_copy(snap.logMsg, snap.logAtS);
@@ -239,7 +240,10 @@ static void handleInput() {
   int steps = encoder_take();
   bool click = knob_take_click();
   bool back = powerbtn_take_back();
-  if (steps || click || back) lastActivity = millis();
+  if (steps || click || back) {
+    lastActivity = millis();
+    dlog("IN steps=%d click=%d back=%d screen=%d sel=%d ready=%d", steps, (int)click, (int)back, (int)nav.screen, nav.sel, snap.nReady);
+  }
 
   if (back) {
     switch (nav.screen) {
@@ -304,7 +308,8 @@ static void uiTask(void *) {
     // idle time is measured from a fresh millis(): t0 is older than an input stamped later in this same pass, and
     // t0 - lastActivity then wraps to ~4 billion ms, which used to put the board to sleep on every first input
     uint32_t idle = millis() - lastActivity;
-    if (cfg.sleepMin && idle > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) powerbtn_sleep_now(SLEEP_AUTO);
+    if (cfg.sleepMin && idle > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) { dlog("AUTO-SLEEP idle=%lu limitMin=%u ready=%d", (unsigned long)idle, cfg.sleepMin, snap.nReady); powerbtn_sleep_now(SLEEP_AUTO); }
+    { static uint32_t hb = 0; if (t0 - hb >= 5000) { hb = t0; dlog("HB heap=%lu min=%lu uiStack=%u loopMax=%lu usb=%d/%d pads=%d ready=%d vbat=%.2f scr=%d", (unsigned long)snap.perf.heapFree, (unsigned long)snap.perf.heapMin, (unsigned)snap.uiStackFree, (unsigned long)snap.perf.loopMaxUs, (int)snap.usbMounted, (int)snap.usbSuspended, snap.gamepads, snap.nReady, snap.vbat, (int)nav.screen); } }
     { uint32_t dim = settings_dim_ms(); setBacklight(dim && idle > dim && snap.nReady == 0 ? 0 : cfg.brightness); }
     animate();
     boot_ui_mark(2);

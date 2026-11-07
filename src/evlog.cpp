@@ -1,4 +1,5 @@
 #include "evlog.h"
+#include "dlog.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,7 @@ static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
 void evlog_add(const char *fmt, ...) {
   char tmp[EVLOG_LEN];
   va_list ap; va_start(ap, fmt); vsnprintf(tmp, sizeof(tmp), fmt, ap); va_end(ap);
+  dlog("EV %s", tmp);
   portENTER_CRITICAL(&mux);
   int i = total % EVLOG_N;
   memcpy(buf[i], tmp, EVLOG_LEN);

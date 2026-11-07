@@ -19,6 +19,7 @@
 #include "hid.h"
 #include "settings.h"
 #include "evlog.h"
+#include "dlog.h"
 #include <math.h>
 #include "gip.h"
 #include <Preferences.h>
@@ -131,6 +132,14 @@ static uint16_t drvOpen(uint8_t rhport, tusb_desc_interface_t const *itf, uint16
 
 static bool drvControl(uint8_t rhport, uint8_t stage, tusb_control_request_t const *req) {
   if (stage == CONTROL_STAGE_SETUP) {
+    // debug log reader: vendor request 0xB0, wValue = 240-byte chunk number, answers with that part of the log
+    if (req->bmRequestType_bit.type == TUSB_REQ_TYPE_VENDOR && req->bmRequestType_bit.direction == TUSB_DIR_IN && req->bRequest == 0xB0) {
+      static uint8_t chunk[240];
+      size_t n = dlog_read((uint32_t)req->wValue * sizeof(chunk), chunk, sizeof(chunk));
+      if (n > req->wLength) n = req->wLength;
+      dlog_note_read();
+      return tud_control_xfer(rhport, req, chunk, (uint16_t)n);
+    }
     if (req->wLength == 0) return tud_control_status(rhport, req);
     return false;   // unknown data request: stall
   }
@@ -294,7 +303,9 @@ void hid_task() {
   if (want > nIf && now - wantSince > 1200) { applyLayout(want, style); return; }          // a controller appeared
   // A controller went away. Wait a few seconds so a brief radio dropout doesn't unplug a pad, and never pull the
   // device while the computer is asleep (the Xbox button must still be able to wake it).
-  if (want < nIf && now - wantSince > 4000 && !tud_suspended()) { applyLayout(want, style); return; }
+  // Going to zero pads also waits 30 s after boot and while a log reader is attached, so the log can always be read.
+  bool keepForLog = want == 0 && (now < 30000 || (dlog_last_read_ms() && now - dlog_last_read_ms() < 30000));
+  if (want < nIf && now - wantSince > 4000 && !tud_suspended() && !keepForLog) { applyLayout(want, style); return; }
   if (nIf == 0) return;
 
   for (int i = 0; i < nIf; i++) {

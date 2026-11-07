@@ -18,6 +18,7 @@
 #include "stats.h"
 #include "settings.h"
 #include "evlog.h"
+#include "dlog.h"
 
 #ifndef XINPUT_MODE
 static uint32_t restartAt = 0;
@@ -85,8 +86,12 @@ static void status() {
 
 void setup() {
   bootguard_begin();
+  dlog_begin();
 #if HAS_PMIC
   powerbtn_begin();
+  dlog("==== BOOT reason=%s crashes=%lu loopMark=%u uiMark=%u slept=%s ====", boot_reason(), (unsigned long)boot_crash_count(), boot_prev_mark(), boot_prev_ui_mark(), powerbtn_last_sleep());
+#else
+  dlog("==== BOOT reason=%s crashes=%lu loopMark=%u ====", boot_reason(), (unsigned long)boot_crash_count(), boot_prev_mark());
 #endif
   esp_task_wdt_init(5, true);   // panic + reset if the main loop stalls for 5 s
   esp_task_wdt_add(NULL);
