@@ -21,7 +21,6 @@ void powerbtn_begin() {
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)PIN_PWR_EN);
   gpio_hold_dis((gpio_num_t)PIN_LCD_BL);
-  rtc_gpio_deinit((gpio_num_t)PWRKEY_PIN);   // hand the pad back to the normal GPIO matrix after a wake
   pinMode(PWRKEY_PIN, INPUT_PULLUP);
 }
 
@@ -36,20 +35,13 @@ static void powerOff() {
   while (digitalRead(PWRKEY_PIN) == LOW) delay(10);   // wait for release, or the wake-on-low would fire at once
   delay(150);
 
-  // Backlight off and held off. The peripheral power rail (PWR_EN) stays ON and held: the top key's pull-up and
-  // the wake path must keep working, and cutting that rail is what could leave the board unable to wake.
+  // Same sequence Bruce uses on this exact board (known to wake from the top key with Launcher):
+  // backlight off, peripheral rail off, wake on GPIO6 low. No pad holds, no extra RTC pull configuration.
+  ledcDetachPin(PIN_LCD_BL);
   pinMode(PIN_LCD_BL, OUTPUT); digitalWrite(PIN_LCD_BL, LOW);
-  pinMode(PIN_PWR_EN, OUTPUT); digitalWrite(PIN_PWR_EN, HIGH);
-  gpio_hold_en((gpio_num_t)PIN_LCD_BL);
-  gpio_hold_en((gpio_num_t)PIN_PWR_EN);
-  gpio_deep_sleep_hold_en();
-  // Wake on the top key (GPIO6, low). Set the RTC pad up fully, with its own pull-up, before arming the wake source.
-  rtc_gpio_init((gpio_num_t)PWRKEY_PIN);
-  rtc_gpio_set_direction((gpio_num_t)PWRKEY_PIN, RTC_GPIO_MODE_INPUT_ONLY);
-  rtc_gpio_pulldown_dis((gpio_num_t)PWRKEY_PIN);
-  rtc_gpio_pullup_en((gpio_num_t)PWRKEY_PIN);
+  delay(300);
+  digitalWrite(PIN_PWR_EN, LOW);
   esp_sleep_enable_ext0_wakeup((gpio_num_t)PWRKEY_PIN, 0);
-  esp_sleep_pd_config(ESP_PD_DOMAIN_RTC_PERIPH, ESP_PD_OPTION_ON);   // the wake pad lives in this domain
   esp_deep_sleep_start();
 }
 
