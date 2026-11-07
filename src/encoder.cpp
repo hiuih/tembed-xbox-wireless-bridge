@@ -1,5 +1,6 @@
 #include "encoder.h"
 #include "driver/gpio.h"
+#include "soc/gpio_struct.h"
 
 #define TRANSITIONS_PER_CLICK 2
 
@@ -13,7 +14,9 @@ static bool reversed = false;
 static const int8_t kStep[16] DRAM_ATTR = {0, +1, -1, 0, -1, 0, 0, +1, +1, 0, 0, -1, 0, -1, +1, 0};
 
 static void IRAM_ATTR onEdge() {
-  uint8_t now = (gpio_get_level((gpio_num_t)PIN_ENC_A) << 1) | gpio_get_level((gpio_num_t)PIN_ENC_B);
+  // read the input register directly: nothing here may live in flash (the cache can be off during flash writes)
+  uint32_t in = GPIO.in;
+  uint8_t now = (((in >> PIN_ENC_A) & 1) << 1) | ((in >> PIN_ENC_B) & 1);
   uint8_t old = ab;
   if (now == old) return;
   ab = now;                              // always resynchronise, even on an invalid jump

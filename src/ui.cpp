@@ -33,6 +33,29 @@ static uint32_t lastActivity = 0, lastStepMs = 0, rumbleOffAt = 0;
 static int rumbleSlot = -1;
 static uint8_t ledLevelPad[MAX_PADS];
 static PowerInfo power;
+
+// The UI runs on core 0; the protocol (radio TX, pairing list, GIP) belongs to core 1. UI actions are posted here
+// and executed by ui_pump() from loop(), so the two cores never touch protocol state at the same time.
+enum { C_RUMBLE, C_LED, C_DISC, C_FORGET_ONE, C_FORGET_ALL, C_PAIR_TOGGLE };
+struct Cmd { uint8_t t; int8_t slot; uint8_t a, b; uint8_t mac[6]; };
+static QueueHandle_t cmdQ = nullptr;
+static void post(uint8_t t, int slot = 0, uint8_t a = 0, uint8_t b = 0, const uint8_t *mac = nullptr) {
+  Cmd c{}; c.t = t; c.slot = slot; c.a = a; c.b = b; if (mac) memcpy(c.mac, mac, 6);
+  if (cmdQ) xQueueSend(cmdQ, &c, 0);
+}
+void ui_pump() {
+  Cmd c;
+  while (cmdQ && xQueueReceive(cmdQ, &c, 0) == pdTRUE) {
+    switch (c.t) {
+      case C_RUMBLE: gip_rumble(c.slot, c.a, c.a, 0, 0); break;
+      case C_LED: gip_led(c.slot, 1, c.a); break;
+      case C_DISC: gip_disconnect(c.slot); break;
+      case C_FORGET_ONE: pairing_remove(c.mac); if (c.slot >= 0) gip_disconnect(c.slot); break;
+      case C_FORGET_ALL: for (int i = 0; i < MAX_PADS; i++) gip_disconnect(i); pairing_clear(); break;
+      case C_PAIR_TOGGLE: if (pairing_active()) pairing_stop(); else pairing_start(); break;
+    }
+  }
+}
 static uint32_t lastPower = 0;
 
 // ---------------------------------------------------------------- helpers
@@ -86,7 +109,9 @@ static void fillSnap() {
   if (snap.nrfOk) { memcpy(snap.spec, nrf24_occupancy(), 84); memcpy(snap.peak, nrf24_peak(), 84); }
   snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
   snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
-  snap.fwVersion = "0.2";
+  snap.fwVersion = "0.5";
+  snap.resetReason = boot_reason(); snap.prevMark = boot_prev_mark(); snap.prevUiMark = boot_prev_ui_mark();
+  snap.uiStackFree = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
 
   // controllers = the paired list; a live slot with the same MAC supplies the live data
   snap.nReady = 0;
@@ -143,8 +168,7 @@ static int padRows() { int n = 0; for (int i = 0; i < MAX_PADS; i++) if (snap.pa
 static int padIndexOfRow(int row) { int n = 0; for (int i = 0; i < MAX_PADS; i++) if (snap.pad[i].present) { if (n == row) return i; n++; } return -1; }
 
 static void forgetAll() {
-  for (int i = 0; i < MAX_PADS; i++) gip_disconnect(i);
-  pairing_clear();
+  post(C_FORGET_ALL);
   toast("All controllers forgotten");
 }
 
@@ -165,12 +189,12 @@ static void settingsClick() {
 static void padAction() {
   int k = nav.padSlot, ls = (k >= 0 && k < MAX_PADS) ? liveSlot[k] : -1;
   switch (nav.sel) {
-    case 0: if (ls >= 0) { gip_rumble(ls, 70, 70, 0, 0); rumbleSlot = ls; rumbleOffAt = millis() + 700; toast("Rumble sent"); } break;
-    case 1: if (ls >= 0) { uint8_t l = ledLevelPad[ls] ? ledLevelPad[ls] : 20; l = l >= 40 ? 10 : l + 10; ledLevelPad[ls] = l; gip_led(ls, 1, l); toast("LED changed"); } break;
-    case 2: if (ls >= 0) { gip_disconnect(ls); toast("Disconnected"); goTo(SC_PADS); } break;
+    case 0: if (ls >= 0) { post(C_RUMBLE, ls, 70); rumbleSlot = ls; rumbleOffAt = millis() + 700; toast("Rumble sent"); } break;
+    case 1: if (ls >= 0) { uint8_t l = ledLevelPad[ls] ? ledLevelPad[ls] : 20; l = l >= 40 ? 10 : l + 10; ledLevelPad[ls] = l; post(C_LED, ls, l); toast("LED changed"); } break;
+    case 2: if (ls >= 0) { post(C_DISC, ls); toast("Disconnected"); goTo(SC_PADS); } break;
     case 3:
       if (!nav.confirm) { nav.confirm = true; toast("Click again to forget"); break; }
-      { uint8_t mm[6]; const uint8_t *m = pairing_mac(k); if (m) { memcpy(mm, m, 6); pairing_remove(mm); } if (ls >= 0) gip_disconnect(ls); toast("Forgotten"); goTo(SC_PADS); }
+      { uint8_t mm[6] = {0}; const uint8_t *m = pairing_mac(k); if (m) { memcpy(mm, m, 6); post(C_FORGET_ONE, ls, 0, 0, mm); } toast("Forgotten"); goTo(SC_PADS); }
       break;
   }
 }
@@ -205,7 +229,7 @@ static void handleInput() {
       break;
     }
     case SC_PAD: if (steps) nav.confirm = false; moveSel(steps, 4); if (click) padAction(); break;
-    case SC_PAIR: if (click) { if (pairing_active()) pairing_stop(); else pairing_start(); } break;
+    case SC_PAIR: if (click) post(C_PAIR_TOGGLE); break;
     case SC_POWER: if (click) powerbtn_sleep_now(); break;
     case SC_SETTINGS: if (steps) nav.confirm = false; moveSel(steps, 9); if (click) settingsClick(); break;
     default: break;
@@ -228,22 +252,25 @@ static void uiTask(void *) {
   for (;;) {
     uint32_t t0 = millis();
     esp_task_wdt_reset();
+    boot_ui_mark(1);
     if (nav.screen == SC_SPLASH && t0 - bootMs > 1700) goTo(SC_HOME);
 
     if (t0 - lastPower > 1000) { lastPower = t0; power_read(power); }
     fillSnap();
     updateTrails();
     if (nav.screen != SC_SPLASH) handleInput();
-    if (rumbleOffAt && (int32_t)(t0 - rumbleOffAt) >= 0) { rumbleOffAt = 0; gip_rumble(rumbleSlot, 0, 0, 0, 0); }
+    if (rumbleOffAt && (int32_t)(t0 - rumbleOffAt) >= 0) { rumbleOffAt = 0; post(C_RUMBLE, rumbleSlot, 0); }
     if (snap.nReady > 0) lastActivity = t0;
     // idle: dim after a minute, sleep after the configured time with no controller
     if (cfg.sleepMin && t0 - lastActivity > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) powerbtn_sleep_now();
     setBacklight(t0 - lastActivity > 60000UL && snap.nReady == 0 ? 0 : cfg.brightness);
     animate();
+    boot_ui_mark(2);
 
     if (nav.screen == SC_SPECTRUM) nrf24_scan_slice(9000);
 
     for (int b = 0; b < 2; b++) {
+      boot_ui_mark(3 + b);
       G g{band, b * BAND_H};
       ui_render(g, snap, nav);
       tft.drawRGBBitmap(0, b * BAND_H, band->getBuffer(), 320, BAND_H);
@@ -276,7 +303,8 @@ void ui_begin() {
   lastActivity = millis();
   goTo(SC_SPLASH);
   // low priority on core 0 (alongside Wi-Fi): drawing can never delay the protocol loop on core 1
-  xTaskCreatePinnedToCore(uiTask, "ui", 8192, nullptr, 1, nullptr, 0);
+  cmdQ = xQueueCreate(8, sizeof(Cmd));
+  xTaskCreatePinnedToCore(uiTask, "ui", 16384, nullptr, 1, nullptr, 0);
 }
 
 void ui_off() { ledcWrite(0, 0); }

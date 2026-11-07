@@ -117,6 +117,9 @@ void loop() {
   radio_set_pairing(pairing_beacon_flag());
   boot_mark(4); radio_tick();
   boot_mark(5); hid_task();
+#if HAS_SCREEN
+  ui_pump();
+#endif
   boot_mark(6);
   if (rumbleOff && (int32_t)(millis() - rumbleOff) >= 0) { rumbleOff = 0; for (int i = 0; i < MAX_PADS; i++) gip_rumble(i, 0, 0, 0, 0); USBSerial.println("rumble off"); }
   bootguard_tick();

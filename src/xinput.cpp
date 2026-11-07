@@ -205,7 +205,7 @@ static void build(uint8_t *r, const Pad &p) {
 enum { RE_IDLE, RE_DROPPED };
 static int reState = RE_IDLE;
 static uint32_t reAt = 0;
-static int wantVal = 1;
+static int wantVal = 0;
 static uint32_t wantSince = 0;
 
 static int pendCount = 1, pendStyle = 0;
@@ -258,22 +258,27 @@ void hid_task() {
   uint32_t now = millis();
   if (reState == RE_DROPPED) {
     if (now - reAt > 900) {
-      nIf = pendCount; style = pendStyle; buildConfig();   // step 2: new descriptors while the device is unplugged
-      tud_connect();                                         // step 3: plug back in
-      reState = RE_IDLE; wantSince = now;
+      style = pendStyle;
+      nIf = pendCount;
+      if (nIf > 0) { buildConfig(); tud_connect(); }   // new descriptors while unplugged, then plug back in
+      reState = RE_IDLE; wantSince = now;              // nIf == 0: stay unplugged, nothing is emulated
     }
     return;
   }
   if (styleRequest >= 0) { int st = styleRequest; styleRequest = -1; if (st != style) { applyLayout(nIf, st); return; } }
-  if (!tud_mounted()) return;
+  if (nIf > 0 && !tud_mounted()) return;
 
+  // The number of emulated Xbox pads follows the number of connected controllers exactly: 0, 1, 2, ...
   remap();
   int ready = 0;
   for (int i = 0; i < MAX_PADS; i++) if (gip_pad(i).stage == PAD_READY) ready++;
-  int want = ready < 1 ? 1 : ready > XI_MAX_IF ? XI_MAX_IF : ready;
+  int want = ready > XI_MAX_IF ? XI_MAX_IF : ready;
   if (want != wantVal) { wantVal = want; wantSince = now; }
-  if (want > nIf && now - wantSince > 1500) { applyLayout(want, style); return; }          // grow quickly
-  if (want < nIf && now - wantSince > 30000) { applyLayout(want, style); return; }         // shrink only after a long absence
+  if (want > nIf && now - wantSince > 1200) { applyLayout(want, style); return; }          // a controller appeared
+  // A controller went away. Wait a few seconds so a brief radio dropout doesn't unplug a pad, and never pull the
+  // device while the computer is asleep (the Xbox button must still be able to wake it).
+  if (want < nIf && now - wantSince > 4000 && !tud_suspended()) { applyLayout(want, style); return; }
+  if (nIf == 0) return;
 
   for (int i = 0; i < nIf; i++) {
     if (!opened[i]) continue;

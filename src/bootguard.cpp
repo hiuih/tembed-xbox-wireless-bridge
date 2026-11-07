@@ -6,9 +6,12 @@
 static RTC_NOINIT_ATTR uint32_t guardMagic;
 static RTC_NOINIT_ATTR uint32_t crashCount;
 static RTC_NOINIT_ATTR uint32_t lastMark;
-static uint8_t prevMark = 0;
+static uint8_t prevMark = 0, prevUi = 0;
 #define GUARD_MAGIC 0xB007CAFEu
 
+static RTC_NOINIT_ATTR uint32_t uiMarkV;
+void boot_ui_mark(uint8_t step) { uiMarkV = (GUARD_MAGIC & 0xFFFFFF00u) | step; }
+uint8_t boot_prev_ui_mark() { return prevUi; }
 void boot_mark(uint8_t step) { lastMark = (GUARD_MAGIC & 0xFFFFFF00u) | step; }
 uint8_t boot_prev_mark() { return prevMark; }
 
@@ -39,10 +42,15 @@ void bootguard_begin() {
   }
   if (guardMagic != GUARD_MAGIC) { guardMagic = GUARD_MAGIC; crashCount = 0; lastMark = 0; }
   prevMark = ((lastMark & 0xFFFFFF00u) == (GUARD_MAGIC & 0xFFFFFF00u)) ? (lastMark & 0xFF) : 0;  // RTC memory is garbage after power-on
+  prevUi = ((uiMarkV & 0xFFFFFF00u) == (GUARD_MAGIC & 0xFFFFFF00u)) ? (uiMarkV & 0xFF) : 0;
   bool bad = r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT || r == ESP_RST_BROWNOUT;
   if (r == ESP_RST_POWERON) crashCount = 0;
   else if (bad) crashCount++;
+#if !HAS_SCREEN
+  // headless board: three quick crashes in a row = stay in the bootloader so it can be re-flashed.
+  // The T-Embed runs under Launcher: a crash must just restart, never drop to a black download-mode screen.
   if (crashCount >= 3) { crashCount = 0; boot_to_download(); }
+#endif
 }
 
 static uint32_t downSince = 0;
