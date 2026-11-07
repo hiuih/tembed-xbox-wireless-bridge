@@ -106,7 +106,7 @@ void ble_begin(bool on) {
   adv->start();
   inited = true;
   state = BLE_ADVERTISING;
-  bleTrying = 0;
+  // bleTrying stays set until the board has run for a while (see ble_tick): a crash shortly after the start disables Bluetooth
   dlog("BLE up: advertising as 'Xbox Bridge', %d pad collections, heap now free=%u", BLE_PADS, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   evlog_add("Bluetooth advertising");
 }
@@ -139,6 +139,7 @@ static void pack(uint8_t *r, const Pad *p) {
 }
 
 void ble_tick() {
+  if (inited && bleTrying && millis() > 20000) { bleTrying = 0; dlog("BLE: survived 20 s, start confirmed"); }
   if (!inited || state != BLE_CONNECTED) return;
   static uint32_t lastTx = 0, lastSent[BLE_PADS];
   static uint8_t prev[BLE_PADS][15];

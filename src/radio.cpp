@@ -3,6 +3,7 @@
 // a soft-AP interface with a spoofed MAC, a custom beacon carrying a
 // Microsoft vendor IE, and raw 802.11 TX/RX.
 #include "radio.h"
+#include "ble.h"
 #include <WiFi.h>
 #include "esp_wifi.h"
 #include "esp_timer.h"
@@ -229,7 +230,9 @@ void radio_begin() {
   ap.ap.beacon_interval = 100;
   esp_wifi_set_config(WIFI_IF_AP, &ap);
   esp_wifi_start();
-  esp_wifi_set_ps(WIFI_PS_NONE);
+  // With Bluetooth running, 'no power save' aborts inside the Wi-Fi/Bluetooth coexistence code (pm_set_sleep_type); an AP
+  // never power-saves anyway, so the call is simply skipped then.
+  if (ble_state() == BLE_OFF) esp_wifi_set_ps(WIFI_PS_NONE);
   esp_wifi_set_max_tx_power(44);   // ~11 dBm: plenty for a controller at arm's length, easier on a USB-powered board
   esp_wifi_set_promiscuous_rx_cb(rxCb);
   wifi_promiscuous_filter_t flt = {.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL};

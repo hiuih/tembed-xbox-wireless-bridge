@@ -8,6 +8,7 @@
 #include <Preferences.h>
 #include <esp_wps.h>
 #include <esp_ota_ops.h>
+#include "esp_sleep.h"
 #include "esp_task_wdt.h"
 #include "mbedtls/sha256.h"
 #include "ui.h"
@@ -354,9 +355,11 @@ static void doInstall() {
   ui_spi_unlock();
   setState(U_DONE, "Saved to the SD card", "restarting into Launcher");
   for (int s = 6; s > 0 && !cancelFlag; s--) { portENTER_CRITICAL(&mux); v.doneLeftS = s; portEXIT_CRITICAL(&mux); for (int k = 0; k < 10; k++) { feed(); delay(100); } }
-  const esp_partition_t *factory = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
-  if (factory) esp_ota_set_boot_partition(factory);   // Launcher
-  ESP.restart();
+  // A software restart goes straight back into this app. Launcher shows its screen after a power-on or a deep-sleep wake,
+  // so go to deep sleep and let a timer wake the board a moment later.
+  dlog("UPD: deep sleep for 1.5 s so Launcher starts");
+  esp_sleep_enable_timer_wakeup(1500000);
+  esp_deep_sleep_start();
 }
 
 void updater_tick() {
