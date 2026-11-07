@@ -110,7 +110,7 @@ static void fillSnap() {
   snap.brightness = cfg.brightness; snap.ledLevel = cfg.ledLevel; snap.sleepMin = cfg.sleepMin;
   snap.accent = cfg.accent; snap.reverseKnob = cfg.reverseKnob;
   snap.fwVersion = "0.5";
-  snap.resetReason = boot_reason(); snap.prevMark = boot_prev_mark(); snap.prevUiMark = boot_prev_ui_mark();
+  snap.sleepWhy = powerbtn_last_sleep(); snap.pmicFault = power_fault(); snap.resetReason = boot_reason(); snap.prevMark = boot_prev_mark(); snap.prevUiMark = boot_prev_ui_mark();
   snap.uiStackFree = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
 
   // controllers = the paired list; a live slot with the same MAC supplies the live data
@@ -262,7 +262,7 @@ static void uiTask(void *) {
     if (rumbleOffAt && (int32_t)(t0 - rumbleOffAt) >= 0) { rumbleOffAt = 0; post(C_RUMBLE, rumbleSlot, 0); }
     if (snap.nReady > 0) lastActivity = t0;
     // idle: dim after a minute, sleep after the configured time with no controller
-    if (cfg.sleepMin && t0 - lastActivity > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) powerbtn_sleep_now();
+    if (cfg.sleepMin && t0 - lastActivity > (uint32_t)cfg.sleepMin * 60000UL && snap.nReady == 0) powerbtn_sleep_now(SLEEP_AUTO);
     setBacklight(t0 - lastActivity > 60000UL && snap.nReady == 0 ? 0 : cfg.brightness);
     animate();
     boot_ui_mark(2);

@@ -16,9 +16,13 @@ static bool rd(uint8_t reg, uint8_t &v) {
 
 static void wr(uint8_t reg, uint8_t v) { Wire.beginTransmission(BQ_ADDR); Wire.write(reg); Wire.write(v); Wire.endTransmission(); }
 
+static uint8_t faultBits = 0;
+uint8_t power_fault() { return faultBits; }
+
 void power_begin() {
   Wire.begin(PIN_SDA, PIN_SCL, 100000);
   uint8_t r02;
+  { uint8_t f = 0; rd(0x0c, f); uint8_t g = 0; rd(0x0c, g); faultBits |= f | g; }   // the register latches: first read = what happened before this boot
   if (rd(0x02, r02)) wr(0x02, r02 | 0x40);   // continuous ADC conversion, so battery/system voltages are real readings
 }
 
@@ -62,6 +66,7 @@ int power_percent(float v) {
 bool power_read(PowerInfo &o) {
   uint8_t r0b, r0e, r0f, r11, r12;
   if (!rd(0x0b, r0b) || !rd(0x0e, r0e) || !rd(0x0f, r0f) || !rd(0x11, r11) || !rd(0x12, r12)) return false;
+  { uint8_t f = 0; if (rd(0x0c, f)) faultBits |= f; }
   o.vbat = 2.304f + (r0e & 0x7f) * 0.02f;
   o.vsys = 2.304f + (r0f & 0x7f) * 0.02f;
   o.vbus = (r11 & 0x7f) ? 2.6f + (r11 & 0x7f) * 0.1f : 0.0f;

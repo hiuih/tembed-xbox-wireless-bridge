@@ -13,10 +13,18 @@
 #define PWRKEY_PIN 6
 #define PWRKEY_HOLD_MS 5000
 
+#include "esp_attr.h"
+static RTC_NOINIT_ATTR uint32_t sleepWhy;      // survives deep sleep
+#define SLEEP_MAGIC 0x51EE0000u
+static const char *lastSleep = "-";
+const char *powerbtn_last_sleep() { return lastSleep; }
+
 static uint32_t downAt = 0;
 static bool lastDown = false;
 
 void powerbtn_begin() {
+  if ((sleepWhy & 0xFFFF0000u) == SLEEP_MAGIC) { static const char *n[] = {"-", "hold", "auto", "menu"}; lastSleep = n[(sleepWhy & 3)]; }
+  sleepWhy = 0;
   // After deep sleep the pins we parked are still held: release them.
   gpio_deep_sleep_hold_dis();
   gpio_hold_dis((gpio_num_t)PIN_PWR_EN);
@@ -26,7 +34,8 @@ void powerbtn_begin() {
 
 float power_hold_progress() { return downAt ? (float)(millis() - downAt) / PWRKEY_HOLD_MS : 0.0f; }
 
-static void powerOff() {
+static void powerOff(int why) {
+  sleepWhy = SLEEP_MAGIC | why;
   USBSerial.println("deep sleep (press the top key to wake)");
   USBSerial.flush();
   leds_off();
@@ -47,7 +56,7 @@ static void powerOff() {
 
 static volatile bool backFlag = false;
 bool powerbtn_take_back() { bool b = backFlag; backFlag = false; return b; }
-void powerbtn_sleep_now() { powerOff(); }
+void powerbtn_sleep_now(int why) { powerOff(why); }
 
 void powerbtn_tick() {
   bool down = digitalRead(PWRKEY_PIN) == LOW;
@@ -60,6 +69,6 @@ void powerbtn_tick() {
       downAt = down ? now : 0;
     }
   }
-  if (downAt && now - downAt >= PWRKEY_HOLD_MS) powerOff();
+  if (downAt && now - downAt >= PWRKEY_HOLD_MS) powerOff(SLEEP_HOLD);
 }
 #endif

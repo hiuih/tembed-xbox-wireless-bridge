@@ -168,7 +168,8 @@ void scr_about(G &g, const Snap &s, const Nav &n) {
   if (s.resetReason) snprintf(b, sizeof(b), "fw %s  reset: %s L%u U%u", s.fwVersion ? s.fwVersion : "dev", s.resetReason, s.prevMark, s.prevUiMark);
   else snprintf(b, sizeof(b), "firmware %s", s.fwVersion ? s.fwVersion : "dev");
   g.text(66, 66, b, T.dim, FONT_S);
-  snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
+  if (s.resetReason) snprintf(b, sizeof(b), "slept: %s   pmic fault: %02x", s.sleepWhy ? s.sleepWhy : "-", s.pmicFault);
+  else snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", s.mac[0], s.mac[1], s.mac[2], s.mac[3], s.mac[4], s.mac[5]);
   g.text(66, 78, b, T.dim, FONT_S);
   unsigned up = s.uptimeS;
   if (up >= 3600) snprintf(b, sizeof(b), "%uh %02um", up / 3600, up / 60 % 60);

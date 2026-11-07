@@ -56,6 +56,8 @@ struct Snap {
   uint8_t brightness, ledLevel, sleepMin, accent;
   bool reverseKnob;
   const char *fwVersion;
+  const char *sleepWhy;            // why the previous run slept: - / hold / auto / menu
+  uint8_t pmicFault;               // charger-chip fault bits (0 = none)
   const char *resetReason;         // why the chip last reset (shown on About)
   uint8_t prevMark, prevUiMark;    // where the main loop / UI task were when the previous run stopped
   uint16_t uiStackFree;            // UI task stack headroom, bytes

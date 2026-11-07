@@ -8,4 +8,6 @@ void powerbtn_begin();          // call early in setup(): releases pin holds aft
 void powerbtn_tick();
 float power_hold_progress();
 bool powerbtn_take_back();      // short press of the top key = back
-void powerbtn_sleep_now();      // deep sleep (wakes on the top key)    // 0..1 while the key is held (drives the LED countdown)
+enum { SLEEP_HOLD = 1, SLEEP_AUTO = 2, SLEEP_MENU = 3 };
+const char *powerbtn_last_sleep();   // why the previous run went to sleep ("-" if it did not)
+void powerbtn_sleep_now(int why = SLEEP_MENU);      // deep sleep (wakes on the top key)    // 0..1 while the key is held (drives the LED countdown)

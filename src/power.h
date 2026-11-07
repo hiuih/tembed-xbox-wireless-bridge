@@ -10,5 +10,6 @@ bool power_vbus_present();      // true if USB (or another input) is powering th
 void power_ship_mode();         // cut the battery path (only really powers off when no USB is connected)
 
 struct PowerInfo { float vbat, vsys, vbus; int chgmA; bool vbusPresent, charging; int pct; };
+uint8_t power_fault();                  // BQ25896 fault register: what it reported at boot, OR'd with anything since (0 = clean)
 bool power_read(PowerInfo &out);        // false if the charger chip does not answer
 int power_percent(float vbat);          // rough LiPo estimate from the voltage
